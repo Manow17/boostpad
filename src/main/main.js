@@ -10,6 +10,7 @@ const mediaBridge = require('./media');
 const upk = require('./core/upk');
 const { Maps, MAP_SLOT } = require('./core/library');
 const arenas = require('./core/arenas');
+const bakkes = require('./core/bakkes');
 const { readLabels, readTexts, applyLabels } = require('./core/labels');
 
 const DEFAULTS = {
@@ -108,6 +109,8 @@ async function buildIndex() {
   built.items.sort((a, b) => a.label.localeCompare(b.label));
   if (dir === cooked() && keys === extraKeys) catalog = built; // nothing changed while we worked
 }
+
+const bakkesLive = async () => (await game.isProcessRunning('BakkesMod.exe')) && (await game.isRunning());
 
 // Game files Boostpad has changed, or will change when the game closes: file (lower case) -> op.
 function arenaChanges() {
@@ -350,6 +353,14 @@ const api = {
     const plan = arenas.snowPlan(arena, list, arenaChanges());
     if (!plan) throw new Error('This arena has no file where snow can go');
     return api.apply(plan.op);
+  },
+
+  // Training: Freeplay Checkpoint (a BakkesMod plugin) settings and buttons
+  // BakkesMod's part inside the game holds the settings while both run; otherwise its files do
+  async training() { return bakkes.state(await bakkesLive()); },
+  async trainingSave(changes) {
+    const res = await bakkes.save(changes, await bakkesLive());
+    return { ...res, training: await api.training() };
   },
 
   presetSave(name) {

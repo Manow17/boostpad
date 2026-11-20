@@ -60,13 +60,14 @@ async function detect() {
   return { epic: detectEpic(), steam: await detectSteam() };
 }
 
-function isRunning() {
+function isProcessRunning(exe) {
   return new Promise((resolve) => {
-    execFile('tasklist', ['/FI', `IMAGENAME eq ${EXE}`, '/NH', '/FO', 'CSV'], { windowsHide: true }, (err, out) => {
-      resolve(!err && out.toLowerCase().includes(EXE.toLowerCase()));
+    execFile('tasklist', ['/FI', `IMAGENAME eq ${exe}`, '/NH', '/FO', 'CSV'], { windowsHide: true }, (err, out) => {
+      resolve(!err && out.toLowerCase().includes(exe.toLowerCase()));
     });
   });
 }
+const isRunning = () => isProcessRunning(EXE);
 
 function launchUrl(platform) {
   return platform === 'steam'
@@ -74,4 +75,4 @@ function launchUrl(platform) {
     : `com.epicgames.launcher://apps/${EPIC_APP}?action=launch&silent=true`;
 }
 
-module.exports = { cookedDir, isValidInstall, detectEpic, detectSteam, detect, isRunning, launchUrl };
+module.exports = { cookedDir, isValidInstall, detectEpic, detectSteam, detect, isRunning, isProcessRunning, launchUrl };

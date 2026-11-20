@@ -10,13 +10,14 @@ const PAGES = {
   garage: ['Garage', 'Give an item you own the look of another. Only you see it.'],
   maps: ['Workshop Maps', 'Training and challenge maps, on Steam or Epic.'],
   lab: ['Map Merge', 'Mix the game’s own arenas, and add snow.'],
+  training: ['Training', 'Freeplay checkpoints: rewind, save a moment, try it again.'],
   presets: ['Presets', 'Save your whole setup and switch in one click.'],
   overlay: ['Overlay', 'Your music and your controller, over the game.'],
   profile: ['Profile', 'Your Boostpad card.'],
   settings: ['Settings', ''],
 };
 const NAV = [
-  [['garage', 'cars'], ['maps', 'maps'], ['lab', 'merge'], ['presets', 'presets']],
+  [['garage', 'cars'], ['maps', 'maps'], ['lab', 'merge'], ['training', 'rewind'], ['presets', 'presets']],
   [['overlay', 'overlay']],
   [['profile', 'profile'], ['settings', 'settings']],
 ];
@@ -61,6 +62,7 @@ const IC = {
   play: 'M8 5l11 7l-11 7z',
   lock: 'M7 11V8a5 5 0 0 1 10 0v3 M5 11h14v9H5z M12 15v2',
   merge: 'M6 4v5a7 7 0 0 0 7 7h5 M6 20v-9 M15 12l4 4l-4 4',
+  rewind: 'M4 12a8 8 0 1 0 2.3-5.6 M4 4v5h5 M12 8v4l3 2',
 };
 const FILLED = new Set(['play']);
 // which icon stands for a pack type / operation category
@@ -629,6 +631,7 @@ function mergeHow(plan, donor, base) {
   const how = {
     stadium: `Both arenas keep their stadium in a separate file, so ${donor.name}’s stadium is put straight into ${base.name}.`,
     surroundings: `${donor.name} keeps its stadium and gets ${base.name}’s surroundings around it${files}. Anything built into ${donor.name}’s own file, like a skyline, stays as well.`,
+    build: `These arenas keep stadium and surroundings in one file, so Boostpad takes both apart piece by piece: ${donor.name}’s pitch, stands and gameplay with ${base.name}’s surroundings around them${files}. Pieces are sorted by name and position, so an odd one can end up on the wrong side.`,
     whole: `${[donor, base].find((a) => !a.field) === donor ? donor.name : base.name} has its stadium built into its main file, so these two cannot be taken apart and put back together. Instead, all of ${donor.name} is played whenever you pick ${base.name}.`,
   }[plan.how];
   return h('div', {},
@@ -636,6 +639,74 @@ function mergeHow(plan, donor, base) {
     h('p', { class: 'small' }, h('b', {}, playHint(plan.play.map((name) => ({ name }))))),
     plan.note && h('p', { class: 'muted small' }, plan.note));
 }
+
+/* ---------- training ---------- */
+
+// Freeplay Checkpoint is a BakkesMod plugin; this page sets its buttons and options.
+let training = null;
+const tr = { draft: null };
+const trainingDraft = (t) => ({ buttons: { ...t.buttons }, options: { ...t.options } });
+
+views.training = () => {
+  const root = bento();
+  if (!training) {
+    api('training').then((t) => { training = t; tr.draft = t.installed ? trainingDraft(t) : null; if (ui.tab === 'training') render(true); });
+    root.append(tile('s12', empty('rewind', 'Looking for BakkesMod', 'Freeplay checkpoints come from BakkesMod.')));
+    return root;
+  }
+  const t = training;
+  if (!t.installed) {
+    root.append(noteTile('info', 's12', h('b', {}, 'BakkesMod is not installed'),
+      h('p', {}, 'Freeplay checkpoints are a BakkesMod plugin (Freeplay Checkpoint by NitrOP). Install BakkesMod from bakkesmod.com, then open this page again.')));
+    return root;
+  }
+  if (!t.plugin || !t.loaded) {
+    root.append(noteTile('warn', 's12', h('b', {}, t.plugin ? 'Freeplay Checkpoint is not switched on' : 'Freeplay Checkpoint is not installed'),
+      h('p', {}, t.plugin ? 'In Rocket League press F2, open Plugins → Plugin Manager and tick Freeplay Checkpoint.' : 'In Rocket League press F2, open Plugins → Plugin Manager, and install Freeplay Checkpoint (plugin 179). Or type bpm_install 179 in the BakkesMod console (F6).')));
+  }
+  const d = tr.draft;
+  const opt = (k) => d.options[k];
+  const setOpt = (k) => (v) => { d.options[k] = v; render(); };
+  const choices = [['', 'Not set'], ...t.choices];
+  const used = {};
+  for (const a of t.actions) if (d.buttons[a.id]) used[d.buttons[a.id]] = (used[d.buttons[a.id]] || 0) + 1;
+  const changed = JSON.stringify(d) !== JSON.stringify(trainingDraft(t));
+  const optRow = (k, label, hint) => h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, label), hint && h('div', { class: 'muted small' }, hint)), toggle(opt(k), setOpt(k)));
+  const sliderRow = (k, label, min, max, unit) => h('div', { class: 'opt-row' }, h('div', { style: 'min-width:190px' }, h('b', {}, label)),
+    slider(min, max, opt(k), setOpt(k), (v) => { d.options[k] = v; const out = document.getElementById(`v-${k}`); if (out) out.textContent = `${v}${unit}`; }),
+    h('span', { id: `v-${k}`, class: 'muted small', style: 'min-width:48px;text-align:right' }, `${opt(k)}${unit}`));
+
+  root.append(
+    tile('s12 ink', head('How it works', h('span', { class: `tag ${t.running ? 'on' : ''}` }, t.running ? 'BakkesMod running' : 'BakkesMod closed')),
+      h('p', { class: 'muted' }, 'In Free Play, press Rewind to freeze the game and scrub back through the last seconds with the stick. Press Save / load to keep that moment as a checkpoint; press it again while playing to jump straight back and try the shot again. Previous and next step through your saved checkpoints.'),
+      h('p', { class: 'muted small' }, t.running ? 'Changes go straight into BakkesMod.' : 'Changes are written to BakkesMod’s settings and apply the next time it starts with Rocket League.')),
+    tile('s7', head('Buttons'),
+      h('div', { class: 'list' }, t.actions.map((a) => h('div', { class: 'opt-row' },
+        h('div', { class: 'grow' }, h('b', {}, a.label), a.hint && h('div', { class: 'muted small' }, a.hint),
+          d.buttons[a.id] && used[d.buttons[a.id]] > 1 && h('div', { class: 'small', style: 'color:var(--warn, #f59e0b)' }, 'This button does two things now.')),
+        select(choices, d.buttons[a.id] || '', (v) => { d.buttons[a.id] = v; render(); }, 230))))),
+    tile('s5', head('Checkpoints'),
+      sliderRow('cpt_history_length', 'Rewind history', 5, 120, ' s'),
+      optRow('cpt_reset_on_goal', 'Back to the checkpoint after a goal'),
+      optRow('cpt_reset_on_ball_ground', 'Back to the checkpoint when the ball lands', 'For aerial and air-dribble practice.'),
+      optRow('cpt_next_instead_of_reset', 'Reset goes to the next checkpoint', 'Work through a list of saved shots.'),
+      optRow('cpt_randomize_loads', 'Load a random checkpoint'),
+      optRow('cpt_mirror_loads', 'Sometimes load it mirrored', 'Practise the same shot from the other side.'),
+      optRow('cpt_show_boost', 'Show boost used while rewinding')),
+    tile('s12', head('Variation', h('span', { class: 'muted small' }, 'Changes each load a little so you don’t learn one exact shot.')),
+      h('div', { class: 'grid2' },
+        optRow('cpt_variance_ball_dir', 'Ball direction'), optRow('cpt_variance_ball_spd', 'Ball speed'), optRow('cpt_variance_ball_rot', 'Ball spin'),
+        optRow('cpt_variance_car_dir', 'Car direction'), optRow('cpt_variance_car_spd', 'Car speed'), optRow('cpt_variance_car_rot', 'Car rotation')),
+      sliderRow('cpt_variance_tot', 'How much', 0, 100, '')),
+    tile('s12', h('div', { class: 'row' },
+      h('p', { class: 'muted small grow' }, changed ? 'You have changes that are not saved yet.' : 'Everything is saved.'),
+      h('button', { class: 'btn', disabled: !changed, onclick: () => { tr.draft = trainingDraft(t); render(); } }, 'Undo changes'),
+      h('button', { class: 'btn primary', disabled: !changed, onclick: () => run(() => api('trainingSave', tr.draft), (r) => {
+        training = r.training; tr.draft = trainingDraft(r.training);
+        return r.via === 'rcon' ? 'Saved. BakkesMod has it now.' : 'Saved. BakkesMod picks it up next time it starts.';
+      }) }, 'Save'))));
+  return root;
+};
 
 /* ---------- presets ---------- */
 

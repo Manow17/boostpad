@@ -108,10 +108,10 @@ function outsideParts(arena) {
  * the first that fits:
  *   stadium       both have a separate stadium part: place's becomes a copy of stadium's.
  *                 Play `place`.
- *   surroundings  `stadium` is one main file plus separate surroundings parts, and place
- *                 has surroundings parts: stadium's become copies of place's. Play `stadium`.
- *   whole         they cannot be taken apart, so the whole of `stadium` is played in
- *                 place of `place`.
+ *   build         otherwise: the two maps are taken apart at the object level and put
+ *                 together (see buildPlan). Play `place`.
+ *   whole         the stadium arena has no part file to load other surroundings in, so
+ *                 the whole of `stadium` is played in place of `place`.
  * Standard soccar arenas only: the pitch shape comes with the stadium.
  * Returns { how, ops, play: [arenas to play to see it], note } or { how: 'none', reason }.
  */
@@ -127,21 +127,56 @@ function mergePlan(stadium, place, all = []) {
   if (stadium.field && place.field) {
     return { how: 'stadium', ops: [copy(place.field, stadium.field)], play: arenasUsing(all, place.field) };
   }
-  // Only for a stadium arena without a separate stadium part: its stands are in its main
-  // file and stay. Arenas with one keep part of the stands in their outside files
-  // (Champions Field's upper ring is in CS_OOB2), so swapping those leaves the crowd in the air.
-  const mine = stadium.field ? [] : outsideParts(stadium), theirs = outsideParts(place);
-  if (mine.length && theirs.length) {
-    // more parts than the other arena has: the extra ones get its parts again, so none of the old surroundings stay
-    const ops = mine.map((p, i) => copy(p.file, theirs[i % theirs.length].file))
-      .filter((op) => op.gameFile.toLowerCase() !== op.sourceGameFile.toLowerCase());
-    const play = arenasUsing(all, mine[0].file);
-    // no ops: the two already share their surroundings, so only a whole swap changes anything
-    if (ops.length) {
-      return { how: 'surroundings', ops, play, note: play.length > 1 ? 'Those arenas share these surroundings, so all of them change.' : '' };
-    }
-  }
+  const built = buildPlan(stadium, place, label, group);
+  if (built) return built;
   return { how: 'whole', ops: [copy(place.file, stadium.file)], play: [place] };
+}
+
+/**
+ * A merge built at the object level (mapbuild.js), for arenas whose stadium is not a
+ * file of its own. The place arena's main file becomes the stadium arena's map with its
+ * surroundings hidden. That map loads its parts by name; some of those names (slots) are
+ * pointed at new files:
+ *   - the place arena's map, and its outside parts, with their stadium hidden and their
+ *     gameplay taken out: the surroundings
+ *   - the stadium arena's own outside parts with their surroundings hidden, for slots
+ *     that are left over (so none of its old surroundings come back)
+ * An arena with its own stadium file keeps part of its stands in its outside parts
+ * (Champions Field's upper ring is in CS_OOB2), so for it only sound and effects parts
+ * are used as slots, and its outside parts load as they are.
+ */
+function buildPlan(stadium, place, label, group) {
+  const name = (p) => p.file.replace(/\.upk$/i, '');
+  const own = stadium.field ? [] : outsideParts(stadium);
+  const spare = stadium.parts.filter((p) => p.kind === 'audio' || p.kind === 'effects');
+  const slots = [...own, ...spare];
+  if (!slots.length) return null;
+  const outside = outsideParts(place);
+  const sources = place.field ? [...outside.map((p) => p.file), place.file] : [place.file, ...outside.map((p) => p.file)];
+  const ops = [];
+  const renames = {};
+  slots.forEach((slot, i) => {
+    const source = sources[i];
+    if (!source && !own.includes(slot)) return; // a sound or effects part with nothing to put there stays as it is
+    const file = `${mapbuildName(`${stadium.id}>${place.id}:${i}`, name(slot).length)}.upk`;
+    renames[name(slot)] = file.replace(/\.upk$/i, '');
+    ops.push(source
+      ? { kind: 'build', gameFile: file, from: source, side: 'surroundings', create: true, category: 'map', group, label }
+      : { kind: 'build', gameFile: file, from: slot.file, side: 'stadium', create: true, category: 'map', group, label });
+  });
+  if (!ops.some((op) => op.side === 'surroundings')) return null;
+  // the main file goes last, so the game never loads it before the files it points to exist
+  ops.push({ kind: 'build', gameFile: place.file, from: stadium.file, side: 'stadium', renames, category: 'map', group, label });
+  const used = slots.filter((s) => renames[name(s)]).filter((s) => s.kind !== 'surroundings');
+  return {
+    how: 'build', ops, play: [place],
+    note: used.length ? `${stadium.name}’s ${used.map((s) => (s.kind === 'audio' ? 'background sounds' : 'effects')).join(' and ')} make room for it, so those are quiet.` : '',
+  };
+}
+// A short file name for a built part, the same every time for the same merge.
+function mapbuildName(seed, maxLen) {
+  const hex = require('crypto').createHash('sha1').update(seed).digest('hex');
+  return `BP${hex.slice(0, Math.max(4, Math.min(8, maxLen - 2)))}`;
 }
 /* ---------- merged arenas ----------
  * `changes` is what Boostpad has changed in the game folder: game file (lower case) -> op.
@@ -180,8 +215,14 @@ function everyMatchOps(chosen, arenas, changes = new Map(), label = chosen.name)
   if (!chosen.standard) throw new Error('Pick a standard soccar arena');
   const source = effectiveArena(chosen, arenas, changes).file;
   const own = (a) => { const op = changes.get(a.file.toLowerCase()); return op && op.group !== 'everymatch'; };
+  // a built merge is built again in each arena's place (its added files are shared); a copy of the
+  // original main file would lose it
+  const built = changes.get(chosen.file.toLowerCase());
+  const make = built && built.kind === 'build' && built.group !== 'everymatch'
+    ? (a) => ({ kind: 'build', gameFile: a.file, from: built.from, side: built.side, renames: built.renames })
+    : (a) => ({ kind: 'copy', gameFile: a.file, sourceGameFile: source });
   return arenas.filter((a) => a.standard && a.id !== chosen.id && a.file.toLowerCase() !== source.toLowerCase() && !own(a)).map((a) => ({
-    kind: 'copy', gameFile: a.file, sourceGameFile: source, category: 'map', group: 'everymatch', chosen: chosen.id, label: `${label} in place of ${a.name}`,
+    ...make(a), category: 'map', group: 'everymatch', chosen: chosen.id, label: `${label} in place of ${a.name}`,
   }));
 }
 

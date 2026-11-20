@@ -10,10 +10,15 @@
 //       arbitrary file (a workshop map).
 //   { kind: 'copy', gameFile, sourceGameFile } gameFile is replaced by a copy of
 //       another game file (an arena part or a whole arena).
+//   { kind: 'build', gameFile, from, side, renames, create } gameFile becomes a copy
+//       of the map `from` with only one side kept ('stadium' or 'surroundings'), and
+//       names renamed (see mapbuild.js). With `create`, gameFile is a new file that
+//       Boostpad adds to the folder and deletes again on revert.
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const upk = require('./upk');
+const mapbuild = require('./mapbuild');
 
 class EngineError extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -71,6 +76,17 @@ class Engine {
 
   buildContent(op) {
     if (op.kind === 'file') return fs.readFileSync(op.from);
+    if (op.kind === 'build') {
+      if (!op.from || path.basename(op.from) !== op.from) throw new EngineError('BAD_OP', 'Invalid source file name');
+      if (!['stadium', 'surroundings'].includes(op.side)) throw new EngineError('BAD_OP', 'Invalid side');
+      const from = this.pristine(op.from);
+      if (!fs.existsSync(from)) throw new EngineError('NO_SUCH_GAME_FILE', `${op.from} is not in the game folder`);
+      const pkg = mapbuild.open(fs.readFileSync(from), this.getKeys());
+      mapbuild.keepSide(pkg, op.side);
+      // a file the game has never had is read with the game's common key
+      const key = op.create ? Buffer.from(upk.DEFAULT_KEYS[0], 'hex') : this.destinationKey(op.gameFile);
+      return mapbuild.repack(pkg, key || pkg.t.pkg.key, op.renames || {});
+    }
     if (op.kind === 'copy') {
       if (!op.sourceGameFile || path.basename(op.sourceGameFile) !== op.sourceGameFile) throw new EngineError('BAD_OP', 'Invalid source file name');
       if (op.sourceGameFile.toLowerCase() === op.gameFile.toLowerCase()) throw new EngineError('SAME_ITEM', 'Pick two different files');
@@ -152,13 +168,20 @@ class Engine {
     const name = this.destName(op);
     const key = name.toLowerCase();
     const dest = path.join(this.cooked(), name);
-    if (!fs.existsSync(dest)) throw new EngineError('NO_SUCH_GAME_FILE', `${name} is not in the game folder`);
+    const created = !!op.create;
+    if (created) {
+      // a new file: never written over one the game (or anything else) put there
+      const mine = this.store.get('active')[key];
+      if (fs.existsSync(dest) && !(mine && mine.created)) throw new EngineError('FILE_EXISTS', `${name} is already in the game folder`);
+    } else if (!fs.existsSync(dest)) throw new EngineError('NO_SUCH_GAME_FILE', `${name} is not in the game folder`);
     const content = this.buildContent(op);
 
-    this.dropIfOverwritten(key);
-    const backup = path.join(this.backupDir, key);
-    fs.mkdirSync(this.backupDir, { recursive: true });
-    if (!fs.existsSync(backup)) fs.copyFileSync(dest, backup); // first change: keep the original
+    if (!created) {
+      this.dropIfOverwritten(key);
+      const backup = path.join(this.backupDir, key);
+      fs.mkdirSync(this.backupDir, { recursive: true });
+      if (!fs.existsSync(backup)) fs.copyFileSync(dest, backup); // first change: keep the original
+    }
 
     const tmp = `${dest}.boostpad-tmp`;
     fs.writeFileSync(tmp, content);
@@ -166,7 +189,7 @@ class Engine {
     const st = fs.statSync(dest);
 
     const record = {
-      id: crypto.randomUUID(), key, file: name, op, appliedAt: Date.now(),
+      id: crypto.randomUUID(), key, file: name, op, appliedAt: Date.now(), ...(created ? { created: true } : {}),
       written: { size: st.size, mtimeMs: st.mtimeMs },
     };
     const active = this.store.get('active');
@@ -179,6 +202,12 @@ class Engine {
     const active = this.store.get('active');
     const rec = active[key];
     if (!rec) return;
+    if (rec.created) { // a file Boostpad added: take it away again
+      fs.rmSync(path.join(this.cooked(), rec.file), { force: true });
+      delete active[key];
+      this.store.set('active', active);
+      return;
+    }
     const backup = path.join(this.backupDir, key);
     if (!this.dropIfOverwritten(key) && fs.existsSync(backup)) {
       fs.copyFileSync(backup, path.join(this.cooked(), rec.file));

@@ -253,9 +253,9 @@ function readTables(buf, extraKeys = []) {
     for (let skip = 4; skip <= 24 && p + 24 <= plain.length && !follows(entry(p)); skip += 4) {
       if (p + skip + 24 <= plain.length && follows(entry(p + skip))) p += skip;
     }
-    chunks.push(entry(p));
+    chunks.push({ ...entry(p), at: p }); // `at`: where the entry is in the decrypted block
   }
-  return { names, exports, chunks };
+  return { names, exports, chunks, pkg };
 }
 
 // One compressed chunk: tag, block size, sizes, a table of blocks, then zlib blocks.
@@ -296,5 +296,5 @@ function baseName(fileName) {
 
 module.exports = {
   UpkError, DEFAULT_KEYS, parseSummary, readPackage, readPackageFile, renameNames, baseName,
-  probeFile, parseKeys, readHeaderFile, readNamesFile, keyOfFile, reencrypt, readTables, inflateChunk, readObject,
+  probeFile, parseKeys, readHeaderFile, readNamesFile, keyOfFile, reencrypt, readTables, inflateChunk, readObject, aes,
 };
