@@ -227,14 +227,14 @@ function makeEngine(cooked, running = { value: false }) {
     assert.ok(list.length > 50 && cs && beach && park);
     assert.strictEqual(cs.field.toLowerCase(), 'cs_field.upk');
     assert.strictEqual(park.field, null, 'Beckwith Park is a single file');
-    assert.strictEqual(park.snow.how, 'version');
+    assert.strictEqual(arenas.snowPlan(park, list).how, 'version');
     // scanned without the game's text, so "standard" is not known here
     const plan = arenas.mergePlan({ ...beach, standard: true }, { ...cs, standard: true }, list);
     assert.strictEqual(plan.how, 'stadium');
     assert.deepStrictEqual(plan.ops.map((o) => [o.gameFile, o.sourceGameFile]), [[cs.field, beach.field]]);
     const again = arenas.scanArenas(real, cache); // second pass comes from the cache
     assert.strictEqual(again.length, list.length);
-    console.log(`        ${list.length} arenas, ${list.filter((a) => a.field).length} with a stadium part, ${list.filter((a) => a.snow).length} with a snow option`);
+    console.log(`        ${list.length} arenas, ${list.filter((a) => a.field).length} with a stadium part, ${list.filter((a) => arenas.snowPlan(a, list)).length} with a snow option`);
   }, !real);
 
   test('a swap is written with the key of the file it replaces', async () => {
@@ -273,7 +273,40 @@ function makeEngine(cooked, running = { value: false }) {
     assert.ok(ops.length > 30 && ops.every((o) => o.kind === 'copy' && o.sourceGameFile === byId('stadium_p').file && o.group === 'everymatch'));
     assert.ok(!ops.some((o) => /labs_|hoops|shattershot/i.test(o.gameFile)));
     assert.deepStrictEqual(arenas.arenasUsing(list, 'Underwater_Field.upk').map((a) => a.name), ['AquaDome']);
+    // snow: only arenas with a snowy version in the game, and not the snowy version itself
+    assert.deepStrictEqual(['stadium_p', 'park_night_p', 'underwater_p', 'cs_p', 'stadium_winter_p'].map((id) => (arenas.snowPlan(byId(id), list) || {}).snowy),
+      ['DFH Stadium (Snowy)', 'Beckwith Park (Snowy)', undefined, undefined, undefined]);
   }, !real);
+
+  test('merged arenas can be used in every match and get snow, and the merge stays', () => {
+    const part = (file) => ({ file, kind: arenas.partKind(file.replace(/\.upk$/, '')) });
+    const arena = (id, name, parts) => ({ id, name, file: `${id}.upk`, standard: true, playable: true, parts: parts.map(part), field: parts.find((p) => /_Field/.test(p)) || null });
+    const aqua = arena('underwater_p', 'AquaDome', ['Underwater_Field.upk', 'Underwater_FX.upk']);
+    const neon = arena('music_p', 'Neon Fields', ['Music_Field.upk', 'Music_Effects.upk']);
+    const mann = arena('eurostadium_p', 'Mannfield', []);
+    const dfh = arena('stadium_p', 'DFH Stadium', ['Stadium_OOB_Audio_Map.upk']);
+    const winter = arena('stadium_winter_p', 'DFH Stadium (Snowy)', ['Stadium_OOB_Audio_Map.upk']);
+    const fni = { ...arena('fni_stadium_p', 'Forbidden Temple (Fire & Ice)', ['FNI_Stadium_VFX.upk']), file: 'FNI_Stadium_P.upk' };
+    const all = [aqua, neon, mann, dfh, winter, fni];
+    const changes = new Map();
+    for (const op of [...arenas.mergePlan(neon, aqua, all).ops, ...arenas.mergePlan(dfh, mann, all).ops]) changes.set(op.gameFile.toLowerCase(), op);
+    // both merged arenas are listed under their merge
+    assert.deepStrictEqual(arenas.mergedArenas(all, changes).map((m) => [m.arena.id, m.label]).sort(),
+      [['eurostadium_p', 'DFH Stadium stadium in Mannfield'], ['underwater_p', 'Neon Fields stadium in AquaDome']]);
+    // every match with the stadium merge: AquaDome's main file loads the merged stadium; the merged-over Mannfield is left alone
+    let ops = arenas.everyMatchOps(aqua, all, changes, 'Neon Fields stadium in AquaDome');
+    assert.deepStrictEqual(ops.map((o) => `${o.gameFile}<-${o.sourceGameFile}`), ['music_p.upk<-underwater_p.upk', 'stadium_p.upk<-underwater_p.upk', 'stadium_winter_p.upk<-underwater_p.upk', 'FNI_Stadium_P.upk<-underwater_p.upk']);
+    assert.ok(ops.every((o) => o.chosen === 'underwater_p' && o.label.startsWith('Neon Fields stadium in AquaDome in place of')));
+    // every match with the whole-arena merge copies what Mannfield really loads: DFH Stadium
+    ops = arenas.everyMatchOps(mann, all, changes);
+    assert.ok(ops.every((o) => o.sourceGameFile === 'stadium_p.upk') && !ops.some((o) => o.gameFile === 'stadium_p.upk'));
+    // a stadium merge gets no snow: the snowy version would replace what makes the merge
+    assert.strictEqual(arenas.snowPlan(aqua, all, changes), null);
+    assert.strictEqual(arenas.snowPlan(dfh, all).op.sourceGameFile, 'stadium_winter_p.upk');
+    // snow on the whole merge: Mannfield becomes the snowy DFH Stadium, still as part of that merge
+    const s = arenas.snowPlan(mann, all, changes);
+    assert.deepStrictEqual([s.how, s.op.gameFile, s.op.sourceGameFile, s.op.group, s.op.label], ['version', 'eurostadium_p.upk', 'stadium_winter_p.upk', 'merge:stadium_p:eurostadium_p', 'DFH Stadium stadium in Mannfield, snowy']);
+  });
 
   test('a copied arena file is written with the replaced file\'s key', async () => {
     const keysFile = path.join(process.env.APPDATA || '', 'boostpad', 'keys.txt');

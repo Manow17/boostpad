@@ -144,7 +144,7 @@ function closeMenu() {
   menuOpen = null;
 }
 function select(options, value, onchange, width) {
-  const current = options.find(([v]) => v === value) || options[0];
+  const current = options.find(([v]) => v === value) || options[0] || [null, 'Loading…'];
   const btn = h('button', { class: 'select', 'aria-haspopup': 'listbox', 'aria-expanded': 'false', style: width && `width:${width}px` },
     h('span', { class: 'grow clip' }, current[1]), icon('chevron', 16));
   const open = () => {
@@ -531,8 +531,16 @@ views.lab = () => {
     return root;
   }
   const byId = (id) => arenas.find((a) => a.id === id);
+  // the lists for "every match" and "snow" include your merged arenas; asked again whenever something changes
+  const stamp = [...S.engine.active.map((r) => `${r.key}:${r.op.label}`), ...S.engine.queue.map((q) => `${q.key}:${q.type}`)].join('|');
+  if (lab.choicesFor !== stamp) {
+    lab.choicesFor = stamp;
+    api('arenaChoices').then((c) => { if (lab.choicesFor === stamp) { lab.choices = c; if (ui.tab === 'lab') render(true); } }).catch(() => {});
+  }
+  const choices = lab.choices || { every: [], snow: [], noSnow: [] };
+  const mergedTag = (c) => (c.merged ? `${c.label} · your merge` : c.label);
   // every standard soccar arena: they all have the same pitch, so any two can be merged
-  const split = arenas.filter((a) => a.standard), snowy = arenas.filter((a) => a.snow && a.playable), standard = arenas.filter((a) => a.standard);
+  const split = arenas.filter((a) => a.standard), standard = arenas.filter((a) => a.standard);
   lab.donor ??= (split.find((a) => a.field) || split[0] || {}).id;
   lab.base ??= (split.filter((a) => a.field)[1] || split[1] || {}).id;
   // how the chosen pair would be merged, asked of the main process once per pair
@@ -543,9 +551,10 @@ views.lab = () => {
     api('mergePlan', lab.donor, lab.base).then((p) => { if (lab.planFor === pairKey) { lab.plan = p; if (ui.tab === 'lab') render(true); } }).catch(() => {});
   }
   const plan = lab.plan;
-  lab.snow ??= (snowy[0] || {}).id;
-  lab.every ??= ((standard.find((a) => a.id === 'stadium_p') || standard[0]) || {}).id;
-  const donor = byId(lab.donor), base = byId(lab.base), snow = byId(lab.snow), every = byId(lab.every);
+  if (!choices.snow.some((c) => c.id === lab.snow)) lab.snow = (choices.snow[0] || {}).id;
+  if (!choices.every.some((c) => c.id === lab.every)) lab.every = ((choices.every.find((c) => c.id === 'stadium_p') || choices.every[0]) || {}).id;
+  const donor = byId(lab.donor), base = byId(lab.base);
+  const snow = choices.snow.find((c) => c.id === lab.snow), every = choices.every.find((c) => c.id === lab.every);
   const options = (list) => list.map((a) => [a.id, a.name]);
   const choose = (key) => (id) => { lab[key] = id; render(); };
 
@@ -553,22 +562,24 @@ views.lab = () => {
   const everyOn = S.engine.active.filter((r) => r.op.group === 'everymatch');
   const everyQueued = S.engine.queue.filter((q) => q.op && q.op.group === 'everymatch');
   const current = (everyOn[0] || everyQueued[0] || {}).op;
-  const currentArena = current && arenas.find((a) => a.file === current.sourceGameFile);
+  const currentId = current && (current.chosen || (arenas.find((a) => a.file === current.sourceGameFile) || {}).id);
+  const currentName = current && (current.label.replace(/ in place of .*$/, ''));
   const targets = every ? standard.filter((a) => a.id !== every.id) : [];
 
   root.append(
     tile('s12 ink', head('Same arena every match', current && h('span', { class: 'tag on' }, everyQueued.length ? 'Queued' : 'On')),
       h('p', { class: 'muted' }, 'Whatever arena a match is played in, you see the one you pick here: online, offline and in Free Play. Everyone else still sees the real arena. All standard arenas have the same pitch, so the ball, walls and goals line up.'),
       h('div', { class: 'row wrap' },
-        select(options(standard), lab.every, choose('every'), 320),
-        h('button', { class: 'btn primary', disabled: !every || (currentArena && currentArena.id === lab.every && !everyQueued.length),
-          onclick: () => run(() => api('everyMatch', lab.every), (r) => (r.queued ? `Queued: ${every.name} goes in when Rocket League closes.` : `Every match now shows ${every.name}.`)) },
+        select(choices.every.map((c) => [c.id, mergedTag(c)]), lab.every, choose('every'), 360),
+        h('button', { class: 'btn primary', disabled: !every || (currentId === lab.every && !everyQueued.length),
+          onclick: () => run(() => api('everyMatch', lab.every), (r) => (r.queued ? `Queued: ${every.label} goes in when Rocket League closes.` : `Every match now shows ${every.label}.`)) },
         current ? 'Switch to this arena' : 'Use in every match'),
         current && h('button', { class: 'btn', onclick: () => run(() => api('everyMatchOff'), S.running ? 'Turning it off when the game closes.' : 'Your arenas are back to normal.') }, 'Turn off')),
+      every && every.merged && h('p', { class: 'small' }, `Your merge comes along: every match shows ${every.label}. If you revert that merge later, pick it here again.`),
       h('p', { class: 'muted small' }, current
-        ? `Now: ${currentArena ? currentArena.name : current.sourceGameFile} in every match (${everyOn.length} arenas replaced${everyQueued.length ? `, ${everyQueued.length} waiting for the game to close` : ''}).`
-        : every ? `Replaces ${targets.length} arena files. The originals are backed up first, which takes about ${gb(targets.reduce((s, a) => s + a.size, 0))} of disk space until you turn it off.` : ''),
-      h('p', { class: 'muted small' }, 'Rocket Labs, Hoops, Dropshot, Snow Day, Knockout and the odd-shaped arenas (Badlands, Tokyo Underpass, ARCtagon) are left as they are.')),
+        ? `Now: ${currentName} in every match (${everyOn.length} arenas replaced${everyQueued.length ? `, ${everyQueued.length} waiting for the game to close` : ''}).`
+        : every ? `Replaces up to ${targets.length} arena files. The originals are backed up first, which takes about ${gb(targets.reduce((s, a) => s + a.size, 0))} of disk space until you turn it off.` : ''),
+      h('p', { class: 'muted small' }, 'Arenas you merged or snowed yourself keep your change. Rocket Labs, Hoops, Dropshot, Snow Day, Knockout and the odd-shaped arenas (Badlands, Tokyo Underpass, ARCtagon) are left as they are.')),
     tile('s7', head('Merge two arenas', h('span', { class: 'tag' }, `${split.length} arenas`)),
       h('p', { class: 'muted' }, 'Puts the stadium of one arena (pitch, walls, goals and stands) in the surroundings of another. Any two soccar arenas can be picked; Hoops, Dropshot, Snow Day and odd-shaped arenas have a different pitch and are left out.'),
       h('div', { class: 'fields' },
@@ -578,14 +589,13 @@ views.lab = () => {
       h('button', { class: 'btn primary lg push', disabled: !plan || plan.how === 'none',
         onclick: () => run(() => api('mergeArenas', lab.donor, lab.base), (r) => `${r.queued ? 'Queued.' : 'Merged.'} ${playHint(r.play.map((name) => ({ name })))}`) },
       S.running ? 'Queue merge' : 'Merge')),
-    tile('s5', head('Add snow', h('span', { class: 'tag' }, `${snowy.length} arenas`)),
-      h('p', { class: 'muted' }, 'Turns an arena snowy, where the game has something to do it with.'),
-      select(options(snowy), lab.snow, choose('snow')),
-      snow && h('p', { class: 'muted small' }, snow.snow.how === 'version'
-        ? 'Uses the snowy version of this arena that is in the game.'
-        : 'Uses the falling-snow effects from Forbidden Temple (Fire & Ice) in place of this arena’s own effects.'),
-      snow && h('p', { class: 'small' }, h('b', {}, playHint(shownIn(snow.snow.gameFile)))),
-      h('button', { class: 'btn primary lg push', disabled: !snow, onclick: () => run(() => api('snowArena', lab.snow), (r) => `${r.queued ? 'Queued.' : 'Snow added.'} ${playHint(shownIn(snow.snow.gameFile))}`) }, S.running ? 'Queue snow' : 'Add snow')));
+    tile('s5', head('Add snow', h('span', { class: 'tag' }, `${choices.snow.length} arenas`)),
+      h('p', { class: 'muted' }, 'Falling snow is only in the game’s four snowy arenas, so an arena built on DFH Stadium, Mannfield, Beckwith Park or Utopia Coliseum can become its snowy version. That includes your whole-arena merges built on them.'),
+      select(choices.snow.map((c) => [c.id, mergedTag(c)]), lab.snow, choose('snow')),
+      snow && h('p', { class: 'muted small' }, `Plays ${snow.snowy} in its place${snow.merged ? ', and keeps your merge' : ''}.`),
+      snow && h('p', { class: 'small' }, h('b', {}, playHint(snow.play.map((name) => ({ name }))))),
+      choices.noSnow && choices.noSnow.length > 0 && h('p', { class: 'muted small' }, `${choices.noSnow.join(', ')}: no snow, because the snowy version would replace the files your merge changed. For snowy surroundings, merge a stadium into Forbidden Temple (Fire & Ice).`),
+      h('button', { class: 'btn primary lg push', disabled: !snow, onclick: () => run(() => api('snowArena', lab.snow), (r) => `${r.queued ? 'Queued.' : 'Snow added.'} ${playHint(snow.play.map((name) => ({ name })))}`) }, S.running ? 'Queue snow' : 'Add snow')));
 
   // merges and snow, one row each (a merge of several files is one row); "every match" is the tile above
   const rows = new Map();

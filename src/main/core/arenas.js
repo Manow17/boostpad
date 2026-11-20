@@ -37,9 +37,8 @@ function partKind(partBase) {
   return 'surroundings';
 }
 
-// Whole-arena snowy versions that ship with the game, and the one stand-alone snow effects part.
+// Whole-arena snowy versions that ship with the game: the only places with falling snow.
 const SNOWY_VERSIONS = { stadium: 'Stadium_Winter_P', park: 'Park_Snowy_P', eurostadium: 'EuroStadium_SnowNight_P', utopiastadium: 'UtopiaStadium_Snow_P' };
-const SNOW_EFFECTS = 'FNI_Stadium_VFX';
 
 // Arenas that are not a normal soccar pitch: Rocket Labs, Hoops, Dropshot, Snow Day,
 // Knockout, Quads, and soccar arenas with an unusual shape. They are never used for,
@@ -74,20 +73,12 @@ function scanArenas(cookedDir, cache = {}, extraKeys = [], names = new Map()) {
     }
     const parts = entry.parts.filter((p) => byLower.has(p.replace(/\.upk$/i, '').toLowerCase()))
       .map((p) => ({ file: p, kind: partKind(p.replace(/\.upk$/i, '')) }));
-    const stem = base.replace(/_P$/i, '').toLowerCase();
-    const family = Object.keys(SNOWY_VERSIONS).find((k) => stem === k || stem.startsWith(`${k}_`));
-    const snowyFile = family && byLower.get(SNOWY_VERSIONS[family].toLowerCase());
-    const effects = parts.find((p) => p.kind === 'effects' && /_VFX\.upk$/i.test(p.file));
-    const snowFx = byLower.get(SNOW_EFFECTS.toLowerCase());
-    let snow = null;
-    if (snowyFile && snowyFile !== file) snow = { how: 'version', gameFile: file, sourceGameFile: snowyFile };
-    else if (effects && snowFx && effects.file !== snowFx) snow = { how: 'effects', gameFile: effects.file, sourceGameFile: snowFx };
     const id = base.toLowerCase();
     arenas.push({
       id, file, size, name: names.get(id) || arenaName(base),
       playable: names.has(id), // the game lists it as an arena you can play
       standard: names.has(id) && !NOT_STANDARD.test(id),
-      field: (parts.find((p) => p.kind === 'field') || {}).file || null, parts, snow,
+      field: (parts.find((p) => p.kind === 'field') || {}).file || null, parts,
     });
   }
   // names the game gives several files are told apart by their file name
@@ -102,16 +93,6 @@ function scanArenas(cookedDir, cache = {}, extraKeys = [], names = new Map()) {
 function arenasUsing(arenas, gameFile) {
   const lower = gameFile.toLowerCase();
   return arenas.filter((a) => a.file.toLowerCase() === lower || a.parts.some((p) => p.file.toLowerCase() === lower));
-}
-
-// "Same arena every match": every standard arena file becomes a copy of `chosen`.
-// Whatever arena the game picks, it loads the chosen one. The pitch is the same size
-// in all standard arenas, so the ball and walls still line up.
-function everyMatchOps(chosen, arenas) {
-  if (!chosen.standard) throw new Error('Pick a standard soccar arena');
-  return arenas.filter((a) => a.standard && a.id !== chosen.id).map((a) => ({
-    kind: 'copy', gameFile: a.file, sourceGameFile: chosen.file, category: 'map', group: 'everymatch', label: `${chosen.name} in place of ${a.name}`,
-  }));
 }
 
 // Parts that hold what lies outside the stadium walls, the main one first.
@@ -162,9 +143,68 @@ function mergePlan(stadium, place, all = []) {
   }
   return { how: 'whole', ops: [copy(place.file, stadium.file)], play: [place] };
 }
-function snowOp(arena) {
-  if (!arena.snow) throw new Error('This arena has no part where snow can go');
-  return { kind: 'copy', gameFile: arena.snow.gameFile, sourceGameFile: arena.snow.sourceGameFile, category: 'map', label: `Snow on ${arena.name}` };
+/* ---------- merged arenas ----------
+ * `changes` is what Boostpad has changed in the game folder: game file (lower case) -> op.
+ * Merges and snow are copies, so they can be followed back to the file that is really loaded. */
+
+const isMerge = (op) => op && / stadium in /.test(op.label || '') && op.group !== 'everymatch';
+
+// The arena whose files are really loaded when `arena` is played: a whole-arena merge
+// (or a snowy version) makes its main file a copy of another arena's.
+function effectiveArena(arena, arenas, changes) {
+  let a = arena;
+  for (let i = 0; i < 5; i++) {
+    const op = changes.get(a.file.toLowerCase());
+    const src = op && op.kind === 'copy' && op.group !== 'everymatch' && arenas.find((x) => x.file.toLowerCase() === op.sourceGameFile.toLowerCase());
+    if (!src) break;
+    a = src;
+  }
+  return a;
 }
 
-module.exports = { scanArenas, arenaName, partKind, mergePlan, outsideParts, snowOp, arenasUsing, everyMatchOps };
+// Arenas that look different because of a merge, each under the name of that merge.
+function mergedArenas(arenas, changes) {
+  const out = new Map();
+  for (const op of changes.values()) {
+    if (!isMerge(op)) continue;
+    for (const a of arenasUsing(arenas, op.gameFile)) if (a.standard && !out.has(a.id)) out.set(a.id, { arena: a, label: op.label.replace(/, snowy$/, ''), group: op.group || null });
+  }
+  return [...out.values()];
+}
+
+// "Same arena every match": every standard arena file becomes a copy of what `chosen`
+// really loads (for a whole-arena merge, the arena merged in). Whatever arena the game
+// picks, it loads that. The pitch is the same size in all standard arenas, so the ball and
+// walls still line up. Arena files you changed yourself (a merge, snow) are left as they are.
+function everyMatchOps(chosen, arenas, changes = new Map(), label = chosen.name) {
+  if (!chosen.standard) throw new Error('Pick a standard soccar arena');
+  const source = effectiveArena(chosen, arenas, changes).file;
+  const own = (a) => { const op = changes.get(a.file.toLowerCase()); return op && op.group !== 'everymatch'; };
+  return arenas.filter((a) => a.standard && a.id !== chosen.id && a.file.toLowerCase() !== source.toLowerCase() && !own(a)).map((a) => ({
+    kind: 'copy', gameFile: a.file, sourceGameFile: source, category: 'map', group: 'everymatch', chosen: chosen.id, label: `${label} in place of ${a.name}`,
+  }));
+}
+
+/**
+ * Snow for an arena, merged or not. Falling snow only exists inside the game's four snowy
+ * arenas (there is no separate snow file: Forbidden Temple (Fire & Ice)'s effects file is
+ * its fire dragon, checked in game), so snow means playing the snowy version of the arena.
+ * Works on what the arena really loads: a whole-arena merge of DFH Stadium becomes the
+ * snowy DFH Stadium and stays a merge. A stadium or surroundings merge cannot get snow,
+ * because the snowy version would replace the files that make the merge.
+ * Returns { how: 'version', op, play } or null.
+ */
+function snowPlan(arena, arenas, changes = new Map()) {
+  const merge = mergedArenas(arenas, changes).find((m) => m.arena.id === arena.id);
+  const eff = effectiveArena(arena, arenas, changes);
+  if (merge && eff.id === arena.id) return null;
+  const stem = eff.file.replace(/_P\.upk$/i, '').toLowerCase();
+  const family = Object.keys(SNOWY_VERSIONS).find((k) => stem === k || stem.startsWith(`${k}_`));
+  const snowy = family && arenas.find((a) => a.file.toLowerCase() === `${SNOWY_VERSIONS[family].toLowerCase()}.upk`);
+  if (!snowy || snowy.id === eff.id) return null; // no snowy version, or already it
+  const op = { kind: 'copy', gameFile: arena.file, sourceGameFile: snowy.file, category: 'map', label: `Snow on ${arena.name}` };
+  if (merge) Object.assign(op, { group: merge.group, label: `${merge.label}, snowy` }); // stays part of its merge
+  return { how: 'version', op, play: [arena], snowy: snowy.name };
+}
+
+module.exports = { scanArenas, arenaName, partKind, mergePlan, outsideParts, arenasUsing, everyMatchOps, effectiveArena, mergedArenas, snowPlan };

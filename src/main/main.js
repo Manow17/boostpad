@@ -109,6 +109,14 @@ async function buildIndex() {
   if (dir === cooked() && keys === extraKeys) catalog = built; // nothing changed while we worked
 }
 
+// Game files Boostpad has changed, or will change when the game closes: file (lower case) -> op.
+function arenaChanges() {
+  const { active, queue } = engine.list();
+  const out = new Map(active.map((r) => [r.key, r.op]));
+  for (const q of queue) { if (q.type === 'apply') out.set(q.key, q.op); else out.delete(q.key); }
+  return out;
+}
+
 function snapshot() {
   const dir = settings.get('installDir');
   return {
@@ -280,14 +288,35 @@ const api = {
     }
     return arenaList;
   },
+  // The arenas for "same arena every match" and "add snow": merged arenas first, under
+  // the name of their merge, then the rest. Snow options say how the snow is made.
+  arenaChoices() {
+    const list = api.arenas(), changes = arenaChanges();
+    const merged = arenas.mergedArenas(list, changes);
+    const mergedIds = new Set(merged.map((m) => m.arena.id));
+    const all = [...merged.map((m) => ({ arena: m.arena, label: m.label, merged: true })),
+      ...list.filter((a) => !mergedIds.has(a.id)).map((a) => ({ arena: a, label: a.name, merged: false }))];
+    const every = all.filter((c) => c.arena.standard).map((c) => ({ id: c.arena.id, label: c.label, merged: c.merged }));
+    const snow = [], noSnow = [];
+    for (const c of all.filter((x) => x.arena.playable)) {
+      const plan = arenas.snowPlan(c.arena, list, changes);
+      if (plan) snow.push({ id: c.arena.id, label: c.label, merged: c.merged, how: plan.how, snowy: plan.snowy, play: plan.play.map((a) => a.name) });
+      else if (c.merged) noSnow.push(c.label);
+    }
+    return { every, snow, noSnow };
+  },
   // Same arena every match: one copy per standard arena, applied (or queued) one by one.
   async everyMatch(id) {
     const list = api.arenas(), chosen = list.find((a) => a.id === id);
     if (!chosen) throw new Error('Arena not found');
-    // a different arena chosen before: those copies go back first, so no file keeps the old one
-    for (const rec of engine.list().active) if (rec.op.group === 'everymatch' && rec.op.sourceGameFile !== chosen.file) await engine.revert(rec.key);
+    const changes = arenaChanges();
+    const merge = arenas.mergedArenas(list, changes).find((m) => m.arena.id === id);
+    const ops = arenas.everyMatchOps(chosen, list, changes, merge ? merge.label : chosen.name);
+    // an arena chosen before: those copies go back first, so no file keeps the old one
+    for (const q of engine.list().queue) if (q.op && q.op.group === 'everymatch') engine.unqueue(q.key);
+    for (const rec of engine.list().active) if (rec.op.group === 'everymatch' && (rec.op.chosen !== id || !ops.some((o) => o.gameFile === rec.op.gameFile && o.sourceGameFile === rec.op.sourceGameFile))) await engine.revert(rec.key);
     let queued = false;
-    for (const op of arenas.everyMatchOps(chosen, list)) queued = (await engine.apply(op)).queued || queued;
+    for (const op of ops) queued = (await engine.apply(op)).queued || queued;
     return { queued, state: snapshot() };
   },
   async everyMatchOff() {
@@ -316,9 +345,11 @@ const api = {
     return snapshot();
   },
   snowArena(id) {
-    const arena = api.arenas().find((a) => a.id === id);
+    const list = api.arenas(), arena = list.find((a) => a.id === id);
     if (!arena) throw new Error('Arena not found');
-    return api.apply(arenas.snowOp(arena));
+    const plan = arenas.snowPlan(arena, list, arenaChanges());
+    if (!plan) throw new Error('This arena has no file where snow can go');
+    return api.apply(plan.op);
   },
 
   presetSave(name) {
