@@ -6,6 +6,8 @@ No account, no subscription, no central server. Everything runs on your PC, and 
 
 > **Status: early (v0.1).** The app, the backup engine, workshop maps, mod packs, presets, tracker, overlay and profile cards work. **Item swaps are experimental and have not been confirmed in game yet** — see [What works](#what-works) before you rely on them.
 
+![Boostpad Garage](docs/garage.png)
+
 ## Read this first
 
 - Rocket League runs with Easy Anti-Cheat. Boostpad does **not** touch, disable or work around it, and it never injects into or reads the running game. It only replaces files on disk while the game is closed.

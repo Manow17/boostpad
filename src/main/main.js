@@ -227,8 +227,10 @@ app.whenReady().then(async () => {
   });
 
   win = new BrowserWindow({
-    width: 1240, height: 800, minWidth: 980, minHeight: 640, backgroundColor: '#0d0f14', show: !smokeShot,
+    width: 1320, height: 840, minWidth: 1000, minHeight: 660, backgroundColor: '#080a10', show: !smokeShot,
     autoHideMenuBar: true, title: 'Boostpad',
+    // custom title bar: the page draws the bar, Windows draws only the three buttons
+    titleBarStyle: 'hidden', titleBarOverlay: { color: '#00000000', symbolColor: '#eef1f7', height: 40 },
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true },
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
