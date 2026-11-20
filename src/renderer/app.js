@@ -126,7 +126,7 @@ views.garage = () => {
 
   const op = () => ({ kind: 'swap', sourceFile: ui.src.file, targetFile: ui.dst.file, category: ui.cat, label: `${ui.src.name} → ${ui.dst.name}` });
   const reasons = {
-    NAME_TOO_LONG: 'Not supported yet: the new look has a longer internal name than your item. Try another pair.',
+    NAME_TOO_LONG: 'Not supported yet: your item has a longer internal name than the new look. Try another pair.',
     NO_KEY: 'This item uses a newer package key that Boostpad cannot read.',
     SAME_ITEM: 'Pick two different items.',
   };

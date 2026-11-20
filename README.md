@@ -42,7 +42,7 @@ No account, no subscription, no central server. Everything runs on your PC, and 
 
 Known limits of item swaps in this version:
 
-- A swap renames the new look's package to your item's name **in place**, so the new look's internal name must not be longer than your item's. The app tells you when a pair cannot be done.
+- A swap renames the new look's package to your item's name **in place**, so your item's internal name must not be longer than the new look's (for example Standard boost → Alpha Reward works, Octane → Venom does not). The app tells you when a pair cannot be done.
 - Only packages encrypted with the long-published community key can be read (roughly two thirds of items on the test machine). Newer packages use keys Boostpad does not have and does not try to obtain.
 - Items are listed under their internal file names, which sometimes differ from the shop names, and tiles have no thumbnails yet.
 
