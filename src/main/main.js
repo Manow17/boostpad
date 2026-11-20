@@ -11,11 +11,14 @@ const upk = require('./core/upk');
 const { Maps, MAP_SLOT } = require('./core/library');
 const arenas = require('./core/arenas');
 const bakkes = require('./core/bakkes');
+const steam = require('./core/steam');
 const { readLabels, readTexts, applyLabels } = require('./core/labels');
 
 const DEFAULTS = {
   platform: null,
   installDir: null,
+  steamInput: false, // Play starts Rocket League through Steam, for Steam Input
+
   theme: { mode: 'dark' },
   presets: [],
   profile: { name: '', title: '', titleColor: '#00d8c8', glow: false, rank: '', avatar: '' },
@@ -110,6 +113,7 @@ async function buildIndex() {
   if (dir === cooked() && keys === extraKeys) catalog = built; // nothing changed while we worked
 }
 
+const rlExe = () => { const dir = settings.get('installDir'); return dir ? path.join(dir, 'Binaries', 'Win64', 'RocketLeague.exe') : null; };
 const bakkesLive = async () => (await game.isProcessRunning('BakkesMod.exe')) && (await game.isRunning());
 
 // Game files Boostpad has changed, or will change when the game closes: file (lower case) -> op.
@@ -412,7 +416,29 @@ const api = {
     return `data:image/${ext};base64,${fs.readFileSync(file).toString('base64')}`;
   },
 
-  launchGame() { shell.openExternal(game.launchUrl(settings.get('platform'))); },
+  // Play: through Steam (for Steam Input) when that is switched on, otherwise the store's own link
+  async launchGame() {
+    if (settings.get('steamInput') && settings.get('platform') === 'epic') {
+      const st = await steam.status(rlExe());
+      if (st.added && st.gameId) {
+        if (await game.isRunning()) return { ok: true };
+        if (st.epicOpen) { const e = new Error('Close the Epic Games Launcher first, so Steam can start it and give the game Steam Input.'); e.code = 'EPIC_OPEN'; throw e; }
+        shell.openExternal(`steam://rungameid/${st.gameId}`);
+        return { ok: true, via: 'steam' };
+      }
+    }
+    shell.openExternal(game.launchUrl(settings.get('platform')));
+    return { ok: true };
+  },
+  // Controller: Steam Input through a Steam shortcut
+  steamState: () => steam.status(rlExe()),
+  async steamShortcut(add) {
+    await steam.setShortcut(!!add, { rlExe: rlExe(), backupDir: path.join(app.getPath('userData'), 'backups') });
+    if (!add) settings.set('steamInput', false);
+    return steam.status(rlExe());
+  },
+  async closeEpicLauncher() { await steam.closeLauncher(); return steam.status(rlExe()); },
+  steamControllerSettings(appid) { shell.openExternal(`steam://controllerconfig/${Number(appid) >>> 0}`); },
   openDataFolder() { shell.openPath(app.getPath('userData')); },
 
   async importKeys() {

@@ -11,6 +11,7 @@ const PAGES = {
   maps: ['Workshop Maps', 'Training and challenge maps, on Steam or Epic.'],
   lab: ['Map Merge', 'Mix the game’s own arenas, and add snow.'],
   training: ['Training', 'Freeplay checkpoints: rewind, save a moment, try it again.'],
+  controller: ['Controller', 'Steam Input for the Epic version: square dead zone and Steam’s stick settings.'],
   presets: ['Presets', 'Save your whole setup and switch in one click.'],
   overlay: ['Overlay', 'Your music and your controller, over the game.'],
   profile: ['Profile', 'Your Boostpad card.'],
@@ -18,7 +19,7 @@ const PAGES = {
 };
 const NAV = [
   [['garage', 'cars'], ['maps', 'maps'], ['lab', 'merge'], ['training', 'rewind'], ['presets', 'presets']],
-  [['overlay', 'overlay']],
+  [['controller', 'stick'], ['overlay', 'overlay']],
   [['profile', 'profile'], ['settings', 'settings']],
 ];
 const RANKS = ['', 'Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Champion', 'Grand Champion', 'Supersonic Legend'];
@@ -63,6 +64,7 @@ const IC = {
   lock: 'M7 11V8a5 5 0 0 1 10 0v3 M5 11h14v9H5z M12 15v2',
   merge: 'M6 4v5a7 7 0 0 0 7 7h5 M6 20v-9 M15 12l4 4l-4 4',
   rewind: 'M4 12a8 8 0 1 0 2.3-5.6 M4 4v5h5 M12 8v4l3 2',
+  stick: 'M12 3a3.5 3.5 0 1 0 0 7a3.5 3.5 0 0 0 0-7z M12 10v5 M5 15h14l-1.5 6h-11z',
 };
 const FILLED = new Set(['play']);
 // which icon stands for a pack type / operation category
@@ -245,7 +247,7 @@ function render(animate) {
     h('div', { class: 'pagetitle grow' }, h('h1', {}, name), sub && h('span', { class: 'muted clip' }, sub)),
     ready && S.running && h('span', { class: 'pill' }, h('span', { class: 'dot live' }), 'Game running · changes are queued'),
     h('button', { class: 'iconbtn', 'aria-label': dark ? 'Switch to light mode' : 'Switch to dark mode', onclick: () => setTheme(themeMode() === 'dark' ? 'light' : 'dark') }, icon(dark ? 'sun' : 'moon', 18)),
-    ready && btnIcon('primary', 'play', 'Play', () => run(() => api('launchGame'), 'Starting Rocket League…'), { disabled: S.running }),
+    ready && btnIcon('primary', 'play', 'Play', () => run(() => api('launchGame'), (r) => (r && r.via === 'steam' ? 'Starting Rocket League through Steam…' : 'Starting Rocket League…')), { disabled: S.running }),
   ].filter(Boolean));
   if (!ready) { view.replaceChildren(setup()); return; }
   updateNav(nav);
@@ -705,6 +707,59 @@ views.training = () => {
         training = r.training; tr.draft = trainingDraft(r.training);
         return r.via === 'rcon' ? 'Saved. BakkesMod has it now.' : 'Saved. BakkesMod picks it up next time it starts.';
       }) }, 'Save'))));
+  return root;
+};
+
+/* ---------- controller ---------- */
+
+// Steam Input for the Epic version: a Steam shortcut that starts Rocket League, so the stick
+// settings are Steam's own (main/core/steam.js).
+let steamSt = null;
+views.controller = () => {
+  const root = bento();
+  if (!steamSt) {
+    api('steamState').then((s) => { steamSt = s; if (ui.tab === 'controller') render(true); }).catch(() => { steamSt = { steam: false }; render(true); });
+    root.append(tile('s12', empty('stick', 'Looking for Steam', 'Steam Input comes from Steam itself.')));
+    return root;
+  }
+  const s = steamSt;
+  // the toast only shows when it worked; run() shows the error otherwise
+  const refresh = (call, msg) => run(async () => { steamSt = await call(); return null; }, msg);
+  if (S.install.platform && S.install.platform !== 'epic') {
+    root.append(noteTile('info', 's12', h('b', {}, 'You play the Steam version'), h('p', {}, 'Steam Input is already there: in Steam, right-click Rocket League → Properties → Controller, then follow step 2 below.')));
+  }
+  if (!s.steam) {
+    root.append(noteTile('warn', 's12', h('b', {}, 'Steam is not installed'), h('p', {}, 'Steam Input is part of Steam. Install Steam (free) and sign in once, then open this page again.')));
+    return root;
+  }
+  const step = (n, title, done, ...body) => tile('s12', head(`${n}. ${title}`, done && h('span', { class: 'tag on' }, 'Done')), body);
+  const li = (...kids) => h('li', {}, kids);
+  root.append(
+    noteTile('info', 's12', h('b', {}, 'Why through Steam'), h('p', {}, 'Rocket League on Epic has no dead zone shape setting. Steam Input does: started through Steam, the game gets Steam’s own stick settings, exactly as on the Steam version. Boostpad adds Rocket League to Steam as a shortcut that starts the Epic Games Launcher with Rocket League, which is how Steam Input reaches Epic games.')),
+    step(1, 'Add Rocket League to Steam', s.added,
+      h('p', { class: 'muted' }, s.added ? `“Rocket League (Steam Input)” is in your Steam library.` : 'Adds “Rocket League (Steam Input)” to your Steam library. Your other shortcuts stay as they are, and a copy of the file is kept.'),
+      s.running && h('p', { class: 'muted small' }, 'Steam keeps its shortcut list open while it runs, so Boostpad closes Steam, makes the change and opens Steam again.'),
+      !s.launcher && h('p', { class: 'small' }, 'The Epic Games Launcher was not found.'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn primary', disabled: !s.launcher, onclick: () => refresh(() => api('steamShortcut', true), s.added ? 'Shortcut updated.' : 'Added to Steam.') }, s.added ? 'Add again' : (s.running ? 'Close Steam and add' : 'Add to Steam')),
+        s.added && h('button', { class: 'btn', onclick: () => refresh(() => api('steamShortcut', false), 'Removed from Steam.') }, 'Remove'))),
+    step(2, 'Turn on Steam Input and pick the square dead zone', false,
+      h('ol', { class: 'steps' },
+        li('In your Steam library, right-click ', h('b', {}, 'Rocket League (Steam Input)'), ' → ', h('b', {}, 'Properties'), ' → ', h('b', {}, 'Controller'), ', and set it to ', h('b', {}, 'Enable Steam Input'), '.'),
+        li('Open the controller layout (Steam: ', h('b', {}, 'Controller settings'), ' on the game’s page), then ', h('b', {}, 'Left Joystick'), ' → the gear next to it.'),
+        li('Set the ', h('b', {}, 'dead zone shape'), ' to ', h('b', {}, 'Square'), ' (Steam also has Cross and Circle). Square reaches full input in the corners, so diagonals go all the way.'),
+        li('Set the inner and outer dead zone to taste. Players often put ', h('b', {}, 'Output Anti-Deadzone'), ' on its first notch, because without it Steam adds a little dead zone of its own.'),
+        li('In Rocket League, ', h('b', {}, 'Settings → Controls'), ': lower the game’s own Controller Deadzone, since Steam handles it now.')),
+      s.added && s.appid && h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => api('steamControllerSettings', s.appid) }, 'Open Steam’s controller settings')),
+      h('p', { class: 'muted small' }, 'These are Steam’s own settings, so they feel exactly like Steam Input; Boostpad does not change your controller input itself.')),
+    step(3, 'Play through Steam', S.settings.steamInput && s.added,
+      h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, 'Play button starts Rocket League through Steam'),
+        h('div', { class: 'muted small' }, 'Or start “Rocket League (Steam Input)” from Steam yourself.')),
+      toggle(S.settings.steamInput, (v) => set('steamInput', v))),
+      h('p', { class: 'muted small' }, 'The Epic Games Launcher has to be closed when you start: if it is already open, it starts the game itself and Steam never sees it.'),
+      s.epicOpen && h('div', { class: 'row' }, h('span', { class: 'small grow' }, 'The Epic Games Launcher is open right now.'),
+        h('button', { class: 'btn', onclick: () => { if (window.confirm('Close the Epic Games Launcher? Downloads in it stop until it opens again.')) refresh(() => api('closeEpicLauncher'), 'Epic Games Launcher closed.'); } }, 'Close it'))),
+  );
   return root;
 };
 

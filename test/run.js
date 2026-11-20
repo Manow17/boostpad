@@ -334,6 +334,32 @@ function makeEngine(cooked, running = { value: false }) {
     assert.deepStrictEqual([s.how, s.op.gameFile, s.op.sourceGameFile, s.op.group, s.op.label], ['version', 'stadium_p.upk', 'EuroStadium_SnowNight_P.upk', 'merge:eurostadium_p:stadium_p', 'Mannfield stadium in DFH Stadium, snowy']);
   });
 
+  test('Steam shortcut file: read and written back exactly, our entry added and removed cleanly', () => {
+    const steam = require('../src/main/core/steam');
+    const { T } = steam;
+    const int = (v) => { const b = Buffer.alloc(4); b.writeUInt32LE(v); return b; };
+    // someone's existing shortcut, with a 64-bit field Boostpad does not know about
+    const root = [{ type: T.MAP, key: 'shortcuts', value: [{ type: T.MAP, key: '0', value: [
+      { type: T.INT, key: 'appid', value: int(2999999999) }, { type: T.STR, key: 'AppName', value: 'Epic Games Launcher' },
+      { type: T.STR, key: 'Exe', value: '"C:\\Epic\\EpicGamesLauncher.exe"' }, { type: T.U64, key: 'Something', value: Buffer.alloc(8, 7) },
+      { type: T.MAP, key: 'tags', value: [{ type: T.STR, key: '0', value: 'Games' }] }] }] }];
+    const file = steam.writeVdf(root);
+    assert.ok(steam.writeVdf(steam.parseVdf(file)).equals(file), 'round trip');
+    const added = steam.withShortcut(steam.parseVdf(file), { launcherExe: 'C:\\Epic\\EpicGamesLauncher.exe', rlExe: 'C:\\RL\\RocketLeague.exe' });
+    const back = steam.parseVdf(added.bytes);
+    const ours = steam.findOurs(back);
+    const field = (k) => ours.value.find((f) => f.key === k);
+    assert.strictEqual(ours.key, '1');
+    assert.strictEqual(field('LaunchOptions').value, steam.RL_LINK);
+    assert.strictEqual(field('appid').value.readUInt32LE(0), added.appid);
+    assert.ok(added.appid >= 0x80000000 && added.appid === steam.shortcutAppId('"C:\\Epic\\EpicGamesLauncher.exe"', steam.NAME));
+    assert.strictEqual(steam.gameId(added.appid), ((BigInt(added.appid) << 32n) | 0x02000000n).toString());
+    // adding twice keeps one entry; removing gives back the file as it was
+    const twice = steam.parseVdf(steam.withShortcut(back, { launcherExe: 'C:\\Epic\\EpicGamesLauncher.exe' }).bytes);
+    assert.strictEqual(twice[0].value.length, 2);
+    assert.ok(steam.withoutShortcut(twice).equals(file));
+  });
+
   test('checkpoint buttons and options are written into BakkesMod\'s files', () => {
     const bakkes = require('../src/main/core/bakkes');
     const cfg = 'rcon_port "9002" //\r\ncpt_freeze_key "XboxTypeS_RightThumbStick" //Key to bind\r\ncpt_history_length "30" //Save history';
