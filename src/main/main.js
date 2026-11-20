@@ -6,6 +6,7 @@ const { Store } = require('./core/store');
 const { Engine } = require('./core/engine');
 const { buildCatalog, annotate } = require('./core/catalog');
 const { readThumbnail } = require('./core/thumbs');
+const mediaBridge = require('./media');
 const upk = require('./core/upk');
 const { Maps, Packs, MAP_SLOT } = require('./core/library');
 
@@ -15,10 +16,8 @@ const DEFAULTS = {
   experimentalSwaps: false,
   theme: { mode: 'dark' },
   presets: [],
-  music: { files: [], volume: 0.6 },
   profile: { name: '', title: '', titleColor: '#00d8c8', glow: false, rank: '', avatar: '' },
-  tracker: { playlist: 'Doubles 2v2', entries: [] },
-  overlay: { controller: false, mmr: false, style: 'light', size: 100, x: null, y: null },
+  overlay: { controller: false, nowPlaying: false, style: 'light', size: 100, x: null, y: null },
   syncUrl: '',
 };
 
@@ -123,7 +122,7 @@ async function pick(options) {
 
 function setOverlay() {
   const cfg = settings.get('overlay');
-  const wanted = cfg.controller || cfg.mmr;
+  const wanted = !!cfg.controller;
   if (!wanted) { if (overlay) overlay.destroy(); overlay = null; return; }
   if (!overlay) {
     const area = screen.getPrimaryDisplay().workArea;
@@ -143,9 +142,38 @@ function setOverlay() {
 }
 
 function overlayPayload() {
-  const t = settings.get('tracker');
-  const last = t.entries.filter((e) => e.playlist === t.playlist).at(-1);
-  return { ...settings.get('overlay'), accent: ACCENT, mmr: settings.get('overlay').mmr ? (last?.mmr ?? null) : null, playlist: t.playlist };
+  return { ...settings.get('overlay'), accent: ACCENT };
+}
+
+// What is playing (Spotify, through Windows' media controls) and the pill that
+// shows it at the top of the screen.
+// (test hook: --fake-media gives test runs a made-up track, so the pages can be screenshotted)
+let mediaState = smokeShot && process.argv.includes('--fake-media')
+  ? { found: true, app: 'Spotify.exe', source: 'Spotify', title: 'Example Track', artist: 'Example Artist', album: 'Example Album', playing: true, position: 62, duration: 201, updated: Date.now(), art: '' }
+  : { found: false };
+let mediaWatcher = null, nowPlaying = null;
+function startMedia() {
+  mediaWatcher = mediaBridge.watch((state) => {
+    mediaState = state;
+    send('media', state);
+    if (nowPlaying && !nowPlaying.isDestroyed()) nowPlaying.webContents.send('media', state);
+  });
+}
+function setNowPlaying() {
+  const wanted = !!settings.get('overlay').nowPlaying;
+  if (!wanted) { if (nowPlaying) nowPlaying.destroy(); nowPlaying = null; return; }
+  if (nowPlaying) return;
+  const area = screen.getPrimaryDisplay().bounds, width = 400, height = 70;
+  nowPlaying = new BrowserWindow({
+    width, height, x: Math.round(area.x + (area.width - width) / 2), y: area.y + 6,
+    frame: false, transparent: true, resizable: false, skipTaskbar: true, focusable: false, show: false, hasShadow: false, icon: ICON,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false },
+  });
+  nowPlaying.setAlwaysOnTop(true, 'screen-saver');
+  nowPlaying.setIgnoreMouseEvents(true);
+  nowPlaying.loadFile(path.join(__dirname, '../renderer/nowplaying.html'));
+  nowPlaying.once('ready-to-show', () => nowPlaying.showInactive());
+  nowPlaying.on('closed', () => { nowPlaying = null; });
 }
 
 // Everything the UI can ask for. Each method returns plain JSON.
@@ -167,7 +195,7 @@ const api = {
   setSetting(key, value) {
     if (!(key in DEFAULTS)) throw new Error(`Unknown setting ${key}`);
     settings.set(key, value);
-    if (key === 'overlay' || key === 'tracker') setOverlay();
+    if (key === 'overlay') { setOverlay(); setNowPlaying(); }
     if (key === 'theme') applyChrome();
     return snapshot();
   },
@@ -254,13 +282,8 @@ const api = {
     return snapshot();
   },
 
-  async musicAdd() {
-    const files = await pick({ title: 'Add music', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Audio', extensions: ['mp3', 'ogg', 'wav', 'flac', 'm4a'] }] });
-    const music = settings.get('music');
-    music.files = [...new Set([...music.files, ...files])];
-    settings.set('music', music);
-    return snapshot();
-  },
+  mediaState: () => mediaState,
+  mediaControl(action) { mediaBridge.control(action); },
   async pickAvatar() {
     const [file] = await pick({ title: 'Choose a picture', properties: ['openFile'], filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] });
     if (!file) return null;
@@ -342,9 +365,12 @@ app.whenReady().then(async () => {
     // test runs render offscreen, which keeps animations running so the screenshot is truthful
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, offscreen: !!smokeShot },
   });
+  win.on('closed', () => { for (const w of [overlay, nowPlaying]) if (w && !w.isDestroyed()) w.destroy(); });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
-  await win.loadFile(path.join(__dirname, '../renderer/index.html'), { hash: arg('tab') || '' });
+  // test hook, smoke mode only: --smoke-page=nowplaying screenshots an overlay page instead of the app
+  const page = smokeShot && arg('smoke-page') ? `${path.basename(arg('smoke-page'))}.html` : 'index.html';
+  await win.loadFile(path.join(__dirname, '../renderer', page), { hash: arg('tab') || '' });
 
   if (smokeShot) {
     const errors = [];
@@ -359,7 +385,10 @@ app.whenReady().then(async () => {
     return;
   }
   setOverlay();
+  setNowPlaying();
+  startMedia();
   setInterval(poll, 4000);
 });
 
 app.on('window-all-closed', () => app.quit());
+app.on('will-quit', () => { if (mediaWatcher) mediaWatcher.stop(); });

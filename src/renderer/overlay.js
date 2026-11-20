@@ -1,4 +1,4 @@
-// Overlay window: controller input display (standard Gamepad API mapping) and MMR counter.
+// Overlay window: controller input display (standard Gamepad API mapping).
 const $ = (id) => document.getElementById(id);
 
 function configure(cfg) {
@@ -6,11 +6,6 @@ function configure(cfg) {
   document.body.style.setProperty('--accent', cfg.accent);
   $('root').style.transform = `scale(${cfg.size / 100})`;
   $('pad').hidden = !cfg.controller;
-  $('mmr').hidden = cfg.mmr == null;
-  if (cfg.mmr != null) {
-    $('mmr').querySelector('b').textContent = cfg.mmr;
-    $('mmr').querySelector('span').textContent = cfg.playlist;
-  }
 }
 
 function frame() {

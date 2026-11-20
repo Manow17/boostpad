@@ -8,9 +8,6 @@
     @font-face { font-family: "Outfit"; src: url("../../assets/fonts/outfit.woff2") format("woff2"); font-weight: 100 900; }
     html, body { margin: 0; background: transparent; overflow: hidden; font: 600 15px "Outfit", "Segoe UI", system-ui, sans-serif; color: #fff; }
     #root { transform-origin: top right; position: absolute; top: 0; right: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; padding: 8px; }
-    #mmr { background: rgba(10, 12, 18, .72); border-radius: 10px; padding: 6px 14px; text-align: right; }
-    #mmr b { font-size: 26px; display: block; line-height: 1.1; }
-    #mmr span { font-size: 11px; opacity: .7; text-transform: uppercase; letter-spacing: .08em; }
     svg { display: block; }
     .body { fill: var(--pad); stroke: var(--edge); stroke-width: 2; }
     .btn { fill: var(--key); stroke: var(--edge); stroke-width: 1.5; transition: fill .04s; }
@@ -22,7 +19,6 @@
 </head>
 <body class="light">
   <div id="root">
-    <div id="mmr" hidden><b></b><span></span></div>
     <svg id="pad" hidden width="300" height="190" viewBox="0 0 300 190">
       <rect class="btn" id="b6" x="48" y="6" width="50" height="16" rx="6"/>
       <rect class="btn" id="b7" x="202" y="6" width="50" height="16" rx="6"/>

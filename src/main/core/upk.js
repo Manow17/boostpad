@@ -208,8 +208,16 @@ function readTables(buf, extraKeys = []) {
   p = s.chunkInfoOffset; // relative to the start of the decrypted block
   const count = plain.readInt32LE(p);
   p += 4;
+  const entry = (at) => ({ uoff: Number(plain.readBigInt64LE(at)), usize: plain.readInt32LE(at + 8), coff: Number(plain.readBigInt64LE(at + 12)), csize: plain.readInt32LE(at + 20) });
   for (let i = 0; i < count; i++, p += 24) {
-    chunks.push({ uoff: Number(plain.readBigInt64LE(p)), usize: plain.readInt32LE(p + 8), coff: Number(plain.readBigInt64LE(p + 12)), csize: plain.readInt32LE(p + 20) });
+    // Chunks follow each other in the file. A few packages have padding between
+    // entries, so if this one does not start where the last ended, look a little further on.
+    const prev = chunks[i - 1];
+    const follows = (c) => !prev || (c.uoff === prev.uoff + prev.usize && c.coff === prev.coff + prev.csize);
+    for (let skip = 4; skip <= 24 && p + 24 <= plain.length && !follows(entry(p)); skip += 4) {
+      if (p + skip + 24 <= plain.length && follows(entry(p + skip))) p += skip;
+    }
+    chunks.push(entry(p));
   }
   return { names, exports, chunks };
 }

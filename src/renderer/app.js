@@ -5,29 +5,23 @@ const api = (method, ...args) => window.boostpad.call(method, ...args);
 let S = null;          // latest snapshot from the main process
 let catalog = null;    // item catalog, loaded on first use
 const ui = { tab: location.hash.slice(1) || 'garage', cat: 'cars', q: '', slot: 'src', src: null, dst: null, check: null, only: true, packType: 'all' };
-const player = new Audio();
-let track = -1;
 
 const PAGES = {
   garage: ['Garage', 'Give an item you own the look of another. Only you see it.'],
   packs: ['Mod Packs', 'Balls, decals, boost meters, wheels, lobby, loading screens, music and sounds.'],
   maps: ['Workshop Maps', 'Training and challenge maps, on Steam or Epic.'],
   presets: ['Presets', 'Save your whole setup and switch in one click.'],
-  active: ['Active', 'Everything Boostpad has changed in your game.'],
-  tracker: ['MMR Tracker', 'Follow your rating through a session.'],
   overlay: ['Overlay', 'An always-on-top window over the game.'],
-  music: ['Music', 'Your own playlist, built in.'],
+  music: ['Spotify', 'What you are listening to, in the app and over the game.'],
   profile: ['Profile', 'Your Boostpad card.'],
   settings: ['Settings', ''],
 };
 const NAV = [
-  [['garage', 'cars'], ['packs', 'packs'], ['maps', 'maps']],
-  [['presets', 'presets'], ['active', 'active']],
-  [['tracker', 'tracker'], ['overlay', 'overlay'], ['music', 'anthems']],
+  [['garage', 'cars'], ['packs', 'packs'], ['maps', 'maps'], ['presets', 'presets']],
+  [['music', 'anthems'], ['overlay', 'overlay']],
   [['profile', 'profile'], ['settings', 'settings']],
 ];
 const PACK_TYPES = [['all', 'All'], ['ball', 'Ball'], ['decal', 'Decals'], ['boostmeter', 'Boost meter'], ['wheels', 'Wheels'], ['menu', 'Lobby'], ['loading', 'Loading screen'], ['music', 'Menu music'], ['sound', 'Sounds'], ['other', 'Other']];
-const PLAYLISTS = ['Duel 1v1', 'Doubles 2v2', 'Standard 3v3', 'Hoops', 'Rumble', 'Dropshot', 'Snow Day', 'Tournament'];
 const RANKS = ['', 'Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Champion', 'Grand Champion', 'Supersonic Legend'];
 const COLORS = ['#00d8c8', '#38bdf8', '#818cf8', '#c084fc', '#f472b6', '#fb7185', '#fb923c', '#facc15', '#a3e635'];
 
@@ -264,7 +258,7 @@ function updateNav(nav) {
     NAV.forEach((group, g) => {
       if (g) list.append(h('div', { class: 'gap' }));
       for (const [id, glyph] of group) {
-        list.append(h('button', { 'data-tab': id, onclick: go(id) }, icon(glyph), h('span', { class: 'grow' }, PAGES[id][0]), id === 'active' && h('span', { class: 'count', hidden: '' })));
+        list.append(h('button', { 'data-tab': id, onclick: go(id) }, icon(glyph), h('span', { class: 'grow' }, PAGES[id][0]), id === 'garage' && h('span', { class: 'count', hidden: '' })));
       }
     });
     nav.append(h('div', { class: 'brand' }, mark(32), 'BOOSTPAD'), list,
@@ -308,7 +302,7 @@ async function ensureCatalog() {
   catalog.counts = {};
   catalog.byId = new Map();
   for (const i of catalog.items) { catalog.counts[i.category] = (catalog.counts[i.category] || 0) + 1; catalog.byId.set(i.id, i); }
-  if (ui.tab === 'garage' || ui.tab === 'active') render(ui.tab === 'garage');
+  if (ui.tab === 'garage') render(true);
 }
 
 // The item's real picture, read from the game's own files (thumb://, see main.js).
@@ -431,7 +425,20 @@ views.garage = () => {
   paintBar();
   fill();
 
-  root.append(bar,
+  // Everything Boostpad has put in the game, or will when it closes, with a way back.
+  const changes = [...S.engine.queue.map((q) => ({ q, op: q.op })), ...S.engine.active.map((r) => ({ r, op: r.op }))];
+  const applied = changes.length ? tile('s12 applied', h('h3', {}, 'In your game'),
+    changes.map(({ q, r, op }) => {
+      const label = op ? (op.label || op.gameFile) : q.key;
+      return h('div', { class: 'change' },
+        op && op.kind === 'swap' ? picture(catalog.byId.get(op.targetFile.toLowerCase()), op.category, 'sm') : art(label, op ? op.category : 'packs'),
+        h('span', { class: 'clip' }, label), q && h('span', { class: 'tag' }, q.type === 'apply' ? 'Queued' : 'Revert queued'),
+        q ? h('button', { class: 'btn sm', onclick: () => run(() => api('unqueue', q.key)) }, 'Cancel')
+          : h('button', { class: 'btn sm', onclick: () => run(() => api('revert', r.key), S.running ? 'Revert queued until the game closes.' : 'Original file restored.') }, 'Revert'));
+    }),
+    S.engine.active.length > 1 && h('button', { class: 'btn sm danger', onclick: () => run(() => api('revertAll'), 'Everything reverted.') }, 'Revert all')) : null;
+
+  root.append(bar, applied || '',
     tile('s3 rail', catalog.categories.map((c) => h('button', { class: ui.cat === c.id ? 'on' : '',
       onclick: () => { ui.cat = c.id; ui.q = ''; ui.src = ui.dst = ui.check = null; ui.slot = 'src'; popGrid = true; render(); } },
     icon(c.id, 17), h('span', { class: 'grow' }, c.label), h('small', {}, catalog.counts[c.id] || 0)))),
@@ -513,7 +520,7 @@ views.maps = () => {
   return root;
 };
 
-/* ---------- presets & active ---------- */
+/* ---------- presets ---------- */
 
 let community = null;
 views.presets = () => {
@@ -553,57 +560,7 @@ views.presets = () => {
   return root;
 };
 
-views.active = () => {
-  const { active, queue } = S.engine;
-  if (!catalog && active.some((r) => r.op.kind === 'swap')) ensureCatalog(); // for the pictures
-  return bento(
-    tile('s4 ink', head('In your game'), h('div', { class: 'big hero' }, active.length), h('p', { class: 'muted' }, active.length ? `${plural(active.length, 'file')} changed. Originals are backed up.` : 'Your game files are original.'),
-      h('button', { class: 'btn danger push', disabled: !active.length, onclick: () => run(() => api('revertAll'), 'Everything reverted.') }, 'Revert all')),
-    tile('s8', head('Waiting for Rocket League to close', h('span', { class: 'tag' }, queue.length)),
-      queue.length ? h('div', { class: 'list' }, queue.map((q) => h('div', { class: 'item' },
-        h('span', { class: 'tag on' }, q.type === 'apply' ? 'Apply' : 'Revert'), h('div', { class: 'grow clip' }, q.op ? q.op.label : q.key),
-        h('button', { class: 'btn sm', onclick: () => run(() => api('unqueue', q.key)) }, 'Cancel'))))
-        : h('p', { class: 'muted' }, 'Nothing is queued. Changes made while the game runs wait here and go in when it closes.')),
-    tile('s12', head('Changes'),
-      active.length ? h('div', { class: 'list' }, active.map((r) => h('div', { class: 'item' },
-        r.op.kind === 'swap' && catalog ? picture(catalog.byId.get(r.op.targetFile.toLowerCase()), r.op.category, 'sm') : art(r.op.label || r.file, r.op.category),
-        h('div', { class: 'grow' }, h('b', {}, r.op.label || r.file), h('div', { class: 'muted small' }, `${r.file} · ${new Date(r.appliedAt).toLocaleString()}`)),
-        h('span', { class: 'tag cap' }, r.op.category || r.op.kind),
-        h('button', { class: 'btn sm', onclick: () => run(() => api('revert', r.key), 'Reverted.') }, 'Revert'))))
-        : empty('active', 'Nothing is changed', 'Swaps, packs and maps you apply show up here.')));
-};
-
-/* ---------- tracker, overlay, music ---------- */
-
-views.tracker = () => {
-  const t = S.settings.tracker;
-  const mine = t.entries.filter((e) => e.playlist === t.playlist);
-  const last = mine.at(-1), today = new Date().toDateString();
-  const firstToday = mine.find((e) => new Date(e.at).toDateString() === today);
-  const delta = last && firstToday ? last.mmr - firstToday.mmr : 0;
-  const input = field({ class: 'grow', inputmode: 'numeric', placeholder: 'MMR after your match', oninput: (e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 5); } });
-  const log = () => { const mmr = Number(input.value); if (mmr > 0) set('tracker', { ...t, entries: [...t.entries, { playlist: t.playlist, mmr, at: Date.now() }].slice(-500) }); };
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') log(); });
-  const stat = (cls, label, value, color) => tile(cls, h('h3', {}, label), h('div', { class: 'big push', style: color && `color:${color}` }, value));
-  const chart = tile('s12', head('Trend'));
-  if (mine.length > 1) {
-    const pts = mine.slice(-40), lo = Math.min(...pts.map((p) => p.mmr)), hi = Math.max(...pts.map((p) => p.mmr));
-    const xy = pts.map((p, i) => `${(i / (pts.length - 1)) * 600},${104 - ((p.mmr - lo) / (hi - lo || 1)) * 88}`);
-    const svg = h('div');
-    svg.innerHTML = `<svg viewBox="0 0 600 120" width="100%" height="150" preserveAspectRatio="none"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".3"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs><polygon fill="url(#g)" points="0,120 ${xy.join(' ')} 600,120"/><polyline fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" points="${xy.join(' ')}"/></svg>`;
-    chart.append(svg);
-  } else chart.append(h('p', { class: 'muted' }, 'Log at least two ratings to see your trend.'));
-  return bento(
-    tile('s5 r2 ink', head('Current', select(PLAYLISTS.map((p) => [p, p]), t.playlist, (p) => set('tracker', { ...t, playlist: p }), 170)),
-      h('div', { class: 'big hero push' }, last ? last.mmr : '—'), h('p', { class: 'muted' }, last ? `Last logged ${new Date(last.at).toLocaleString()}` : 'Nothing logged for this playlist yet.')),
-    stat('s3', 'Today', last ? `${delta >= 0 ? '+' : ''}${delta}` : '—', last && (delta < 0 ? 'var(--bad)' : 'var(--accent-text)')),
-    stat('s2', 'Peak', last ? Math.max(...mine.map((e) => e.mmr)) : '—'),
-    stat('s2', 'Logged', mine.length),
-    tile('s7', head('Log a match', h('button', { class: 'btn sm danger', disabled: !last, onclick: () => set('tracker', { ...t, entries: t.entries.filter((e) => e !== last) }) }, 'Undo last')),
-      h('div', { class: 'row' }, input, h('button', { class: 'btn primary', onclick: log }, 'Log')),
-      h('p', { class: 'muted small' }, 'Entered by hand: Rocket League has no public stats API, and the stats sites block automated readers.')),
-    chart);
-};
+/* ---------- overlay & spotify ---------- */
 
 views.overlay = () => {
   const o = S.settings.overlay, upd = (patch) => set('overlay', { ...o, ...patch });
@@ -611,47 +568,76 @@ views.overlay = () => {
     h('div', { class: 'row' }, h('span', { class: 'art lg', style: 'background:var(--tile-2);color:var(--accent-text)' }, icon(glyph, 30)), h('span', { class: 'grow' }), toggle(on, (v) => upd({ [key]: v }))),
     h('div', { class: 'push' }, h('h2', {}, name), h('p', { class: 'muted' }, text)));
   return bento(
-    feature('overlay', 'Controller', 'Every button, stick and trigger you press, live.', o.controller, 'controller'),
-    feature('tracker', 'MMR counter', 'Your latest logged rating for the selected playlist.', o.mmr, 'mmr'),
-    tile('s7', head('Look'),
-      h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, 'Controller colour'), h('div', { class: 'muted small' }, 'Match your own pad.')),
+    feature('anthems', 'Now playing', 'A small pill at the top of your screen with the track, artist and progress.', !!o.nowPlaying, 'nowPlaying'),
+    feature('overlay', 'Controller', 'Every button, stick and trigger you press, live, in the top-right corner.', !!o.controller, 'controller'),
+    tile('s7', head('Controller look'),
+      h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, 'Colour'), h('div', { class: 'muted small' }, 'Match your own pad.')),
         select([['light', 'White'], ['dark', 'Black']], o.style, (v) => upd({ style: v }))),
       h('div', { class: 'opt-row' }, h('div', { style: 'width:150px' }, h('b', {}, 'Size'), h('div', { class: 'muted small', id: 'ovsize' }, `${o.size}%`)),
         slider(50, 160, o.size, (v) => upd({ size: v }), (v) => { document.getElementById('ovsize').textContent = `${v}%`; }))),
-    noteTile('info', 's5', 'The overlay is a separate window drawn on top of the game. Run Rocket League in borderless mode to see it. It does not read or change the game.'));
+    noteTile('info', 's5', 'Overlays are separate click-through windows drawn on top of the game. Run Rocket League in borderless or windowed mode to see them. They do not read or change the game.'));
 };
 
-function play(i) {
-  const files = S.settings.music.files;
-  if (!files.length) return;
-  track = (i + files.length) % files.length;
-  player.src = `file:///${files[track].replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/').replace('%3A', ':')}`;
-  player.volume = S.settings.music.volume;
-  player.play().catch((e) => toast(`Could not play this file: ${e.message}`, true));
-  render();
-}
-player.addEventListener('ended', () => play(track + 1));
+let media = { found: false }; // what Windows says is playing (see main/media.js)
+let musicUI = null;           // handles of the mounted Spotify page
+const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const mediaNow = () => Math.max(0, Math.min(media.duration || 0, media.position + (media.playing ? (Date.now() - media.updated) / 1000 : 0)));
 
 views.music = () => {
-  const m = S.settings.music, name = (f) => f.split(/[\\/]/).pop().replace(/\.\w+$/, '');
-  const add = () => run(() => api('musicAdd'));
-  const playing = track >= 0 && !player.paused;
-  const current = track >= 0 && m.files[track] ? name(m.files[track]) : null;
-  return bento(
-    tile(`s5${playing ? ' accent' : ''}`, head(playing ? 'Now playing' : 'Player'),
-      h('div', { class: 'row' }, art(current || 'music', 'anthems', 'lg'), h('h2', { class: 'grow clip' }, current || 'Nothing playing')),
-      h('div', { class: 'row push' },
-        h('button', { class: 'btn grow', onclick: () => play(track - 1) }, 'Prev'),
-        h('button', { class: 'btn primary grow', onclick: () => { if (track < 0) play(0); else if (player.paused) { player.play(); render(); } else { player.pause(); render(); } } }, playing ? 'Pause' : 'Play'),
-        h('button', { class: 'btn grow', onclick: () => play(track + 1) }, 'Next')),
-      h('div', { class: 'row' }, h('span', { class: 'muted small' }, 'Volume'),
-        slider(0, 100, Math.round(m.volume * 100), (v) => set('music', { ...m, volume: v / 100 }), (v) => { player.volume = v / 100; }))),
-    tile('s7', head('Playlist', btnIcon('primary sm', 'plus', 'Add music', add)),
-      m.files.length ? h('div', { class: 'list' }, m.files.map((f, i) => h('div', { class: 'item' },
-        h('button', { class: `btn sm${i === track && playing ? ' primary' : ''}`, onclick: () => play(i) }, i === track && playing ? 'Playing' : 'Play'), h('div', { class: 'grow clip' }, name(f)),
-        h('button', { class: 'btn sm danger', onclick: () => set('music', { ...m, files: m.files.filter((x) => x !== f) }) }, 'Remove'))))
-        : empty('anthems', 'Your playlist is empty', 'Add MP3, OGG, WAV, FLAC or M4A files from your PC.')));
+  const o = S.settings.overlay;
+  const cover = h('div', { class: 'cover' }), name = h('h2', { class: 'clip' }), artist = h('p', { class: 'muted clip' });
+  const source = h('span', { class: 'tag' }), fill = h('i'), time = h('span', { class: 'muted small' });
+  const press = (action) => () => {
+    if (action === 'toggle') { media = { ...media, position: mediaNow(), updated: Date.now(), playing: !media.playing }; paint(); } // show it at once
+    api('mediaControl', action);
+  };
+  const playBtn = h('button', { class: 'btn primary lg grow', onclick: press('toggle') });
+  const pillArt = h('span', { class: 'npart' }), pillTitle = h('b', { class: 'clip' }), pillArtist = h('span', { class: 'muted small clip' });
+
+  const playing = h('div', { class: 'col grow', style: 'gap:18px' },
+    h('div', { class: 'row', style: 'gap:20px' }, cover,
+      h('div', { class: 'col grow', style: 'gap:6px' }, name, artist, h('div', { class: 'progress' }, fill), time)),
+    h('div', { class: 'row push' }, h('button', { class: 'btn lg', onclick: press('prev') }, 'Previous'), playBtn, h('button', { class: 'btn lg', onclick: press('next') }, 'Next')));
+  const idle = empty('anthems', 'Nothing is playing', 'Open Spotify on this PC and press play. Boostpad reads the track from Windows, so there is nothing to log in to.');
+  const hero = tile('s7 ink', head('Now playing', source), playing, idle);
+
+  function tick() {
+    if (!media.found) return;
+    const now = mediaNow();
+    fill.style.width = media.duration ? `${(now / media.duration) * 100}%` : '0';
+    time.textContent = media.duration ? `${clock(now)} / ${clock(media.duration)}` : '';
+  }
+  function paint() {
+    playing.hidden = !media.found;
+    idle.hidden = !!media.found;
+    source.hidden = !media.found;
+    if (media.found) {
+      cover.replaceChildren(media.art ? h('img', { src: media.art, alt: '' }) : icon('anthems', 40));
+      name.textContent = media.title;
+      artist.textContent = [media.artist, media.album].filter(Boolean).join(' · ');
+      source.textContent = media.source;
+      playBtn.textContent = media.playing ? 'Pause' : 'Play';
+    }
+    pillTitle.textContent = media.found ? media.title : 'Track title';
+    pillArtist.textContent = media.found ? media.artist : 'Artist';
+    pillArt.style.backgroundImage = media.found && media.art ? `url("${media.art}")` : 'none';
+    tick();
+  }
+  musicUI = { paint, tick, root: hero };
+  paint();
+
+  return bento(hero,
+    tile('s5', head('In-game overlay', toggle(!!o.nowPlaying, (v) => set('overlay', { ...o, nowPlaying: v }))),
+      h('p', { class: 'muted' }, 'Shows the track in a small pill at the top of your screen while you play. Needs borderless or windowed mode.'),
+      h('div', { class: 'nppreview push' }, h('div', { class: 'nppill' }, pillArt,
+        h('span', { class: 'col', style: 'gap:0;min-width:0' }, pillTitle, pillArtist), h('span', { class: 'npeq' }, h('i'), h('i'), h('i'))))),
+    noteTile('info', 's12', 'Works with the Spotify desktop app, and with the Spotify web player in a browser. It follows what plays on this PC: music playing on your phone or another device does not show up.'));
 };
+
+const musicLive = () => ui.tab === 'music' && musicUI && musicUI.root.isConnected;
+window.boostpad.on('media', (state) => { media = state; if (musicLive()) musicUI.paint(); });
+api('mediaState').then((state) => { media = state; if (musicLive()) musicUI.paint(); });
+setInterval(() => { if (musicLive()) musicUI.tick(); }, 500);
 
 /* ---------- profile ---------- */
 
@@ -718,7 +704,7 @@ views.settings = () => {
         select([['epic', 'Epic Games'], ['steam', 'Steam']], S.install.platform, (v) => set('platform', v)))),
     tile('s7', head('Item swaps', h('span', { class: 'tag' }, 'Experimental')),
       h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, 'Enable item swaps'),
-        h('div', { class: 'muted small' }, 'Lets the Garage rewrite item packages. Originals are always backed up and can be restored from Active.')),
+        h('div', { class: 'muted small' }, 'Lets the Garage rewrite item packages. Originals are always backed up and can be restored from the Garage.')),
       toggle(S.settings.experimentalSwaps, (v) => set('experimentalSwaps', v))),
       h('p', { class: 'muted small' }, 'Rocket League runs with Easy Anti-Cheat. Boostpad does not touch or work around it and cannot promise that modified files are accepted online. Changing game files may break the game’s terms of service and could put your account at risk. Use it at your own risk; the launcher’s “Verify files” always restores a clean install.')),
     tile('s12', head('Item pictures and keys', h('span', { class: `tag${S.keys ? ' on' : ''}` }, S.keys ? `${S.keys.toLocaleString()} extra keys loaded` : 'Built-in key only')),

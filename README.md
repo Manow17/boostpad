@@ -10,6 +10,8 @@ No account, no subscription, no central server. Everything runs on your PC, and 
 | --- | --- |
 | ![Garage, dark theme](docs/garage.png) | ![Garage, light theme](docs/garage-light.png) |
 
+![Spotify tab](docs/spotify.png)
+
 ## Read this first
 
 - Rocket League runs with Easy Anti-Cheat. Boostpad does **not** touch, disable or work around it, and it never injects into or reads the running game. It only replaces files on disk while the game is closed.
@@ -21,15 +23,13 @@ No account, no subscription, no central server. Everything runs on your PC, and 
 
 | Tab | What it does |
 | --- | --- |
-| **Garage** | Give an item you own the look of another item (cars, wheels, boosts, decals, toppers, antennas, engine sounds, trails, goal explosions, paint finishes, banners, borders, anthems). Items are shown with their real pictures, read from your own game files. Once you pick your item, only the looks that work with it are listed. Random pick included. |
+| **Garage** | Give an item you own the look of another item (cars, wheels, boosts, decals, toppers, antennas, engine sounds, trails, goal explosions, paint finishes, banners, borders, anthems). Items are shown with their real pictures, read from your own game files. Once you pick your item, only the looks that work with it are listed. Everything applied or queued is listed there with a Revert button. |
 | **Mod Packs** | Apply community packs: custom balls, decals, boost meters, wheels, lobby backgrounds, loading screens, menu music, sounds. |
 | **Workshop Maps** | Load a training/challenge map into the Underpass slot and play it from Free Play. |
 | **Presets** | Save everything that is active and switch setups in one click. Unlimited. Share as a code or through a sync server. |
-| **Active** | See every change in your game, revert one or all. Shows the queue. |
 | **Swap queue** | Changes made while the game is running wait and go in when it closes. |
-| **MMR Tracker** | Log your rating per playlist; see today's change, peak and a trend line. |
-| **Overlay** | Always-on-top controller input display and MMR counter, resizable. |
-| **Music** | Built-in player for your own audio files. |
+| **Overlay** | Click-through windows over the game: a small now-playing pill at the top of the screen, and a controller input display. |
+| **Spotify** | Shows what the Spotify app (or the web player) on this PC is playing, with cover art, progress and play/pause/skip. Read from Windows' media controls: no login, no API key. |
 | **Profile** | A profile card with any name, title, colour, glow, rank badge and picture, shareable with other Boostpad users. |
 | **Themes** | Dark or light. Both use the icon's turquoise; the light theme adds charcoal blocks (sidebar, swap panel, headline tiles). Switch from the top bar or Settings. |
 
@@ -42,7 +42,7 @@ No account, no subscription, no central server. Everything runs on your PC, and 
 | Item catalog and pictures | Built from your own install (about 8,600 items on the test machine). Pictures are decoded from the game's thumbnail packages and cached: about two thirds with the built-in key, about 97% with a key list added |
 | Item swaps | **Experimental.** The package rewrite is tested structurally (see below) but nobody has yet confirmed the result in game |
 | Workshop maps, mod packs | File replacement is tested; whether a given map or pack loads depends on the file |
-| Tracker, overlay, music, profile, sync server | Working; the overlay has not been tested over the game with a controller |
+| Spotify, overlays, profile, sync server | Working. The now-playing reader is tested against a real Windows media session (title, artist, cover, pause); the overlays have not been checked over the running game |
 
 Known limits of item swaps in this version:
 
@@ -107,7 +107,7 @@ Each item is a package file such as `WHEEL_Star_SF.upk` whose contents answer to
 ```
 src/main/core/   game.js (find game)  upk.js (package reader/patcher)  engine.js (apply, back up, revert, queue)
                  catalog.js (items)   thumbs.js (item pictures)        library.js (maps, packs)  store.js (settings)
-src/main/        main.js (window, IPC)  preload.js
+src/main/        main.js (window, IPC)  preload.js  media.js + media.ps1 (now playing, via Windows)
 src/renderer/    app.js, styles.css, overlay
 assets/          app icon (icon-source.webp, turned into icon.png with `npm run icon`) and fonts
 server/          optional sync server
