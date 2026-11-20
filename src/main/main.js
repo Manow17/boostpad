@@ -6,6 +6,7 @@ const { Store } = require('./core/store');
 const { Engine } = require('./core/engine');
 const { buildCatalog, annotate } = require('./core/catalog');
 const { readThumbnail } = require('./core/thumbs');
+const upk = require('./core/upk');
 const { Maps, Packs, MAP_SLOT } = require('./core/library');
 
 const DEFAULTS = {
@@ -53,15 +54,54 @@ function thumbnail(file) {
   fs.mkdirSync(dir, { recursive: true });
   let jpg = Buffer.alloc(0); // an empty file remembers "this one has no readable picture"
   try {
-    const { width, height, bgra } = readThumbnail(cooked(), file);
+    const { width, height, bgra } = readThumbnail(cooked(), file, extraKeys);
     jpg = nativeImage.createFromBitmap(bgra, { width, height }).resize({ width: THUMB_SIZE, height: THUMB_SIZE, quality: 'best' }).toJPEG(86);
   } catch { /* unreadable package or unknown layout */ }
   fs.writeFileSync(cached, jpg);
   return jpg.length ? jpg : null;
 }
 
+// Extra decryption keys the user has added (keys.txt in the data folder). Boostpad
+// ships only the long-published default key; newer items need a key list.
+let extraKeys = [];
+const keysFile = () => path.join(app.getPath('userData'), 'keys.txt');
+function loadKeys() {
+  try { extraKeys = upk.parseKeys(fs.readFileSync(keysFile(), 'utf8')); } catch { extraKeys = []; }
+}
+// Forget "no readable picture" answers, so they are tried again with the current keys.
+function retryMissingThumbs() {
+  const dir = path.join(app.getPath('userData'), 'thumbs');
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return; }
+  for (const name of names) {
+    const file = path.join(dir, name);
+    if (fs.statSync(file).size === 0) fs.rmSync(file, { force: true });
+  }
+}
+
 const cooked = () => (settings.get('installDir') ? game.cookedDir(settings.get('installDir')) : null);
 const send = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
+
+// Lists the items and checks which packages are readable. The check is remembered
+// per file; the first run (or the first after adding keys) takes a few seconds, so
+// it is done in slices to keep the window responsive.
+let catalogJob = null;
+async function buildIndex() {
+  const dir = cooked(), keys = extraKeys;
+  const built = buildCatalog(dir);
+  const index = new Store(path.join(app.getPath('userData'), 'index.json'), { dir: '', keys: 0, files: {} });
+  const fresh = index.get('dir') === dir && index.get('keys') === keys.length;
+  const files = fresh ? index.get('files') : {};
+  if (!fresh) retryMissingThumbs();
+  const swapped = new Set(engine.list().active.map((r) => r.key));
+  for (let i = 0; i < built.items.length; i += 120) {
+    annotate(dir, built.items.slice(i, i + 120), files, swapped, keys);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  index.data = { dir, keys: keys.length, files };
+  index.save();
+  if (dir === cooked() && keys === extraKeys) catalog = built; // nothing changed while we worked
+}
 
 function snapshot() {
   const dir = settings.get('installDir');
@@ -72,6 +112,7 @@ function snapshot() {
     running,
     engine: engine.list(),
     mapSlot: MAP_SLOT,
+    keys: extraKeys.length,
   };
 }
 
@@ -131,15 +172,10 @@ const api = {
     return snapshot();
   },
 
-  getCatalog() {
+  async getCatalog() {
     if (!catalog) {
-      catalog = buildCatalog(cooked());
-      // which packages are readable: checked once, then remembered per file
-      const index = new Store(path.join(app.getPath('userData'), 'index.json'), { dir: '', files: {} });
-      const files = index.get('dir') === cooked() ? index.get('files') : {};
-      annotate(cooked(), catalog.items, files, new Set(Object.keys(engine.list().active.reduce((m, r) => ({ ...m, [r.key]: 1 }), {}))));
-      index.data = { dir: cooked(), files };
-      index.save();
+      catalogJob ??= buildIndex().finally(() => { catalogJob = null; });
+      await catalogJob;
     }
     return catalog;
   },
@@ -235,6 +271,25 @@ const api = {
 
   launchGame() { shell.openExternal(game.launchUrl(settings.get('platform'))); },
   openDataFolder() { shell.openPath(app.getPath('userData')); },
+
+  async importKeys() {
+    const [file] = await pick({ title: 'Choose a key list (keys.txt)', properties: ['openFile'], filters: [{ name: 'Key list', extensions: ['txt'] }] });
+    if (!file) return snapshot();
+    const text = fs.readFileSync(file, 'utf8');
+    if (!upk.parseKeys(text).length) throw new Error('No keys found in that file. Expected one key per line (64 hex characters or base64).');
+    fs.writeFileSync(keysFile(), text);
+    return api.reloadKeys();
+  },
+  removeKeys() {
+    fs.rmSync(keysFile(), { force: true });
+    return api.reloadKeys();
+  },
+  reloadKeys() {
+    loadKeys();
+    retryMissingThumbs();
+    catalog = null;
+    return snapshot();
+  },
   overlayConfig: () => overlayPayload(),
 };
 
@@ -258,7 +313,9 @@ app.whenReady().then(async () => {
     backupDir: path.join(data, 'backups'),
     getCookedDir: cooked,
     isRunning: game.isRunning,
+    getKeys: () => extraKeys,
   });
+  loadKeys();
   maps = new Maps(path.join(data, 'maps'));
   packs = new Packs(path.join(data, 'packs'));
   if (cooked() && game.isValidInstall(settings.get('installDir'))) engine.reconcile();
@@ -298,7 +355,7 @@ app.whenReady().then(async () => {
       fs.writeFileSync(smokeShot, (await win.webContents.capturePage()).toPNG());
       console.log(JSON.stringify({ smoke: 'ok', errors }));
       app.exit(errors.length ? 1 : 0);
-    }, arg("smoke-eval") ? 5000 : 2500);
+    }, arg("smoke-wait") ? Number(arg("smoke-wait")) : arg("smoke-eval") ? 5000 : 2500);
     return;
   }
   setOverlay();

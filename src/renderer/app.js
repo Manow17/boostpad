@@ -67,6 +67,7 @@ const IC = {
   sun: 'M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8z M12 2v2 M12 20v2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M2 12h2 M20 12h2 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4',
   moon: 'M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.500 10.500z',
   play: 'M8 5l11 7l-11 7z',
+  lock: 'M7 11V8a5 5 0 0 1 10 0v3 M5 11h14v9H5z M12 15v2',
 };
 const FILLED = new Set(['play']);
 // which icon stands for a pack type / operation category
@@ -314,9 +315,10 @@ async function ensureCatalog() {
 // Items whose package cannot be read fall back to their category icon.
 function picture(item, glyph, cls = '') {
   const box = h('span', { class: `pic ${cls}` });
-  const fallback = () => { box.classList.add('none'); box.replaceChildren(icon(glyphFor(glyph), cls.includes('sm') ? 18 : 26)); };
+  // a lock means the package needs a key Boostpad does not have (see Settings)
+  const fallback = () => { box.classList.add('none'); box.replaceChildren(icon(item && item.ok === false ? 'lock' : glyphFor(glyph), cls.includes('sm') ? 18 : 26)); };
   if (!item || !item.thumb) { fallback(); return box; }
-  const img = h('img', { alt: '', loading: 'lazy', decoding: 'async', draggable: 'false', src: `thumb://item/${encodeURIComponent(item.thumb)}` });
+  const img = h('img', { alt: '', loading: 'lazy', decoding: 'async', draggable: 'false', src: `thumb://item/${encodeURIComponent(item.thumb)}?k=${S.keys}` });
   img.addEventListener('load', () => img.classList.add('in'));
   img.addEventListener('error', fallback);
   box.append(img);
@@ -368,6 +370,7 @@ views.garage = () => {
     else if (!ui.check) status = h('span', { class: 'muted' }, 'Checking…');
     else if (!ready) status = h('span', { style: 'color:var(--bad)' }, ['NAME_TOO_LONG', 'NO_KEY'].includes(ui.check.code) ? whyNot(ui.src, ui.dst) : ui.check.message);
     else if (S.running) status = h('span', { class: 'muted' }, 'Rocket League is open. The swap waits until you close it.');
+    else if (ui.cat === 'cars' || ui.cat === 'explosions') status = h('span', { class: 'muted' }, 'Ready. Other tools report that car and goal explosion swaps can crash the game.');
     else status = h('span', { class: 'tag on' }, 'Ready');
     bar.replaceChildren(
       pick('src', 'Your item', ui.src, 'Pick an item you own'),
@@ -718,6 +721,11 @@ views.settings = () => {
         h('div', { class: 'muted small' }, 'Lets the Garage rewrite item packages. Originals are always backed up and can be restored from Active.')),
       toggle(S.settings.experimentalSwaps, (v) => set('experimentalSwaps', v))),
       h('p', { class: 'muted small' }, 'Rocket League runs with Easy Anti-Cheat. Boostpad does not touch or work around it and cannot promise that modified files are accepted online. Changing game files may break the game’s terms of service and could put your account at risk. Use it at your own risk; the launcher’s “Verify files” always restores a clean install.')),
+    tile('s12', head('Item pictures and keys', h('span', { class: `tag${S.keys ? ' on' : ''}` }, S.keys ? `${S.keys.toLocaleString()} extra keys loaded` : 'Built-in key only')),
+      h('p', { class: 'muted' }, 'Rocket League encrypts item packages with many different keys. Boostpad includes the one long-published key, which opens about two thirds of items. Items it cannot open show a lock instead of a picture and cannot be used as a new look. If you have a key list (a keys.txt, one key per line, as published by community tools), add it to open the rest.'),
+      h('div', { class: 'row wrap' },
+        h('button', { class: 'btn primary', onclick: () => run(async () => { const res = await api('importKeys'); catalog = null; return res; }, (r) => (r.keys ? `${r.keys.toLocaleString()} keys loaded. Pictures are being re-read.` : 'No change.')) }, S.keys ? 'Replace key list' : 'Add key list'),
+        S.keys ? h('button', { class: 'btn danger', onclick: () => run(async () => { const res = await api('removeKeys'); catalog = null; return res; }, 'Key list removed.') }, 'Remove') : null)),
     tile('s5', head('Data'), h('p', { class: 'muted' }, 'Backups, maps, packs and settings live in the data folder.'),
       h('div', { class: 'row wrap push' },
         h('button', { class: 'btn', onclick: () => api('openDataFolder') }, 'Open data folder'),

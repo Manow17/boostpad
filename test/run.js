@@ -235,6 +235,19 @@ function makeEngine(cooked, running = { value: false }) {
     assert.deepStrictEqual([...px.subarray(0, 4)], [0, 0, 255, 255]); // BGRA
   });
 
+  test('key lists: hex and base64 lines are read, junk and the built-in key are dropped', () => {
+    const hex = 'ab'.repeat(32), b64 = Buffer.alloc(32, 7).toString('base64');
+    const keys = upk.parseKeys(`# comment\n${hex}\n${hex.toUpperCase()}\n${b64}\nnot a key\n${upk.DEFAULT_KEYS[0]}\n`);
+    assert.deepStrictEqual(keys, [hex, Buffer.alloc(32, 7).toString('hex')]);
+  });
+
+  test('wrong extra keys do not stop a readable package from opening', () => {
+    const wrong = ['11'.repeat(32), '22'.repeat(32)];
+    const pkg = upk.readPackageFile(path.join(cooked, shortF), wrong);
+    assert.ok(pkg.names.length > 0);
+    assert.strictEqual(upk.probeFile(path.join(cooked, shortF), wrong), true);
+  }, !real);
+
   await runAll();
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(`\n${passed} passed, ${skipped} skipped${process.exitCode ? ', FAILURES above' : ''}`);

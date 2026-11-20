@@ -56,7 +56,7 @@ function buildCatalog(cookedDir) {
     const m = /^([A-Za-z]+)_(.+)_SF\.upk$/i.exec(file);
     if (!m || /_T$/i.test(m[2])) continue; // "_T_SF" packages are thumbnails
     const category = PREFIXES[m[1].toLowerCase()];
-    if (!category) continue;
+    if (!category || /_premium_skins?(_|$)/i.test(m[2])) continue; // skin sets shipped with a car body are not items
     items.push({
       id: file.toLowerCase(),
       file,

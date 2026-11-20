@@ -39,7 +39,7 @@ No account, no subscription, no central server. Everything runs on your PC, and 
 | --- | --- |
 | Finding the game (Epic, Steam), running check, Play button | Tested on an Epic install |
 | Backup, restore, queue, game-update detection | Covered by automated tests on copies of real game files |
-| Item catalog and pictures | Built from your own install (about 8,600 items on the test machine). Pictures are decoded from the game's thumbnail packages and cached; roughly two thirds of items have a readable one |
+| Item catalog and pictures | Built from your own install (about 8,600 items on the test machine). Pictures are decoded from the game's thumbnail packages and cached: about two thirds with the built-in key, about 97% with a key list added |
 | Item swaps | **Experimental.** The package rewrite is tested structurally (see below) but nobody has yet confirmed the result in game |
 | Workshop maps, mod packs | File replacement is tested; whether a given map or pack loads depends on the file |
 | Tracker, overlay, music, profile, sync server | Working; the overlay has not been tested over the game with a controller |
@@ -48,7 +48,8 @@ Known limits of item swaps in this version:
 
 - **The game must be closed.** If Rocket League is open the swap is queued and applied when you close it; you see it the next time you start the game.
 - A swap renames the new look's package to your item's name **in place**, so your item's internal name must not be longer than the new look's (for example Standard boost -> Alpha Reward works, Octane -> Venom does not). On the test machine about half the looks in a category work for a given item. The Garage lists only those once you have picked your item.
-- Only packages encrypted with the long-published community key can be read (roughly two thirds of items on the test machine). Newer packages use keys Boostpad does not have and does not try to obtain, so those items cannot be used as a new look and show an icon instead of a picture.
+- Boostpad ships one decryption key, the long-published community one, which opens roughly two thirds of items. The rest show a lock instead of a picture and cannot be used as a new look. If you have a key list (a `keys.txt`, one key per line in hex or base64, as published by community tools), add it under **Settings -> Item pictures and keys**; on the test machine that raised coverage to about 97%. Key lists are not included in this repository.
+- Other community tools that swap items the same way report that **car body and goal explosion swaps can crash the game**. Treat those two categories as the riskiest.
 - Items are listed under their internal file names, which sometimes differ from the shop names (some cars have code names). The pictures help; a proper name list is not done yet.
 
 Not implemented: custom paint colours, 3D garage preview, converting your own MP3s into game sounds, stadium colours, and changing your name, title or rank **inside** the game. The last one would need code injected into the running game, which Boostpad does not do.

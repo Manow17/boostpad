@@ -92,13 +92,43 @@ function parseNames(plain, s) {
   return p === s.importOffset - s.nameOffset ? names : null;
 }
 
+// Keys as buffers: the built-in one first, then any the user has added.
+const keyCache = new WeakMap();
+function keyBuffers(extraKeys = []) {
+  if (!keyCache.has(extraKeys)) {
+    keyCache.set(extraKeys, [...DEFAULT_KEYS, ...extraKeys].map((hex) => Buffer.from(hex, 'hex')).filter((k) => k.length === 32));
+  }
+  return keyCache.get(extraKeys);
+}
+
+// Quick test of one key: do the first two cipher blocks decrypt to the start of a
+// name table (a length, then printable text)? Lets a long key list be tried cheaply.
+function fitsNameTable(key, block) {
+  const plain = aes('dec', key, block.subarray(0, 32));
+  const len = plain.readInt32LE(0);
+  if (len < 2 || len > 1024) return false;
+  const text = plain.subarray(4, Math.min(32, 4 + len - 1));
+  return text.every((c) => c >= 0x20 && c < 0x7f) && (4 + len > 32 || plain[4 + len - 1] === 0);
+}
+
+// Reads a key list: one key per line, 64 hex characters or base64 of 32 bytes.
+function parseKeys(text) {
+  const keys = new Set();
+  for (const line of String(text).split(/\r?\n/)) {
+    const t = line.trim();
+    if (/^[0-9a-fA-F]{64}$/.test(t)) keys.add(t.toLowerCase());
+    else if (/^[A-Za-z0-9+/]{43}=$/.test(t)) keys.add(Buffer.from(t, 'base64').toString('hex'));
+  }
+  DEFAULT_KEYS.forEach((k) => keys.delete(k.toLowerCase()));
+  return [...keys];
+}
+
 function readPackage(buf, extraKeys = []) {
   const summary = parseSummary(buf);
   const range = headerRange(summary, buf.length);
   const block = buf.subarray(range.start, range.start + range.size);
-  for (const hex of [...DEFAULT_KEYS, ...extraKeys]) {
-    const key = Buffer.from(hex, 'hex');
-    if (key.length !== 32) continue;
+  for (const key of keyBuffers(extraKeys)) {
+    if (block.length < 32 || !fitsNameTable(key, block)) continue;
     const plain = aes('dec', key, block);
     const names = parseNames(plain, summary);
     if (names) return { summary, range, key, plain, names };
@@ -148,13 +178,7 @@ function probeFile(file, extraKeys = []) {
     const summary = parseSummary(head.subarray(0, fs.readSync(fd, head, 0, head.length, 0)));
     const block = Buffer.alloc(32);
     if (fs.readSync(fd, block, 0, 32, summary.nameOffset) < 32) return false;
-    return [...DEFAULT_KEYS, ...extraKeys].some((hex) => {
-      const plain = aes('dec', Buffer.from(hex, 'hex'), block);
-      const len = plain.readInt32LE(0); // first name-table entry: length, then text
-      if (len < 2 || len > 1024) return false;
-      const text = plain.subarray(4, Math.min(32, 4 + len - 1));
-      return text.every((c) => c >= 0x20 && c < 0x7f) && (4 + len > 32 || plain[4 + len - 1] === 0);
-    });
+    return keyBuffers(extraKeys).some((key) => fitsNameTable(key, block));
   } catch { return false; } finally { if (fd !== undefined) fs.closeSync(fd); }
 }
 
@@ -228,5 +252,5 @@ function baseName(fileName) {
 
 module.exports = {
   UpkError, DEFAULT_KEYS, parseSummary, readPackage, readPackageFile, renameNames, baseName,
-  probeFile, readTables, inflateChunk, readObject,
+  probeFile, parseKeys, readTables, inflateChunk, readObject,
 };
