@@ -77,6 +77,14 @@ npm install
 npm start
 ```
 
+To find Boostpad from the Windows Start Menu (search for "Boostpad"), add a shortcut once:
+
+```
+npm run shortcut
+```
+
+It starts this copy of the app, so keep the folder where it is. `npm run shortcut -- --remove` takes it away again.
+
 Run the tests (they copy a few packages to a temp folder and never write to your game):
 
 ```
