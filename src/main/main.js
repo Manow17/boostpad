@@ -295,10 +295,25 @@ const api = {
     for (const rec of engine.list().active) if (rec.op.group === 'everymatch') await engine.revert(rec.key);
     return snapshot();
   },
-  mergeArenas(donorId, baseId) {
+  // How a merge would be done, for the page to describe before anything is written.
+  mergePlan(stadiumId, placeId) {
     const list = api.arenas(), find = (id) => list.find((a) => a.id === id);
-    if (!find(donorId) || !find(baseId)) throw new Error('Arena not found');
-    return api.apply(arenas.mergeOp(find(donorId), find(baseId)));
+    const plan = arenas.mergePlan(find(stadiumId), find(placeId), list);
+    return { how: plan.how, reason: plan.reason, note: plan.note, files: plan.ops ? plan.ops.length : 0, play: (plan.play || []).map((a) => a.name) };
+  },
+  async mergeArenas(stadiumId, placeId) {
+    const list = api.arenas(), find = (id) => list.find((a) => a.id === id);
+    const plan = arenas.mergePlan(find(stadiumId), find(placeId), list);
+    if (plan.how === 'none') throw new Error(plan.reason);
+    let queued = false;
+    for (const op of plan.ops) queued = (await engine.apply(op)).queued || queued;
+    return { queued, play: plan.play.map((a) => a.name), state: snapshot() };
+  },
+  // Undo every file of one merge (they share a group).
+  async revertGroup(group) {
+    for (const q of engine.list().queue) if (q.op && q.op.group === group) engine.unqueue(q.key);
+    for (const rec of engine.list().active) if (rec.op.group === group) await engine.revert(rec.key);
+    return snapshot();
   },
   snowArena(id) {
     const arena = api.arenas().find((a) => a.id === id);

@@ -25,7 +25,7 @@ No account, no subscription, no server. Everything runs on your PC, and every ga
 | --- | --- |
 | **Garage** | Give an item you own the look of another item (cars, wheels, boosts, decals, toppers, antennas, engine sounds, trails, goal explosions, paint finishes, banners, borders, anthems). Items are shown with their real names and pictures, read from your own game files, and each section lists only its own items. A search stays in the section you are in and tells you which other sections also have a match. Once you pick your item, only the looks that work with it are listed. Everything applied or queued is listed there with a Revert button. |
 | **Workshop Maps** | Load a training/challenge map into the Underpass slot and play it from Free Play. |
-| **Map Merge** | Mix the game's own arenas: put the stadium of one arena into the surroundings of another, add snow where the game has something to do it with, or see the same arena in every match. Arenas are listed under the names the game uses, and each change says which arena to play to see it. Experimental. |
+| **Map Merge** | Mix the game's own arenas: put the stadium of any soccar arena into the surroundings of any other, add snow where the game has something to do it with, or see the same arena in every match. Arenas are listed under the names the game uses, and each change says which arena to play to see it. Experimental. |
 | **Presets** | Save everything that is active and switch setups in one click. Unlimited. Copy a preset as a code to pass it on. |
 | **Swap queue** | Changes made while the game is running wait and go in when it closes. |
 | **Overlay** | Click-through windows over the game, shown only while Rocket League is the window in front. A now-playing pill for your music, and a top-down PS5, PS4 or Xbox controller (picked automatically from the one plugged in) that lights up with your inputs. Each has its own position (drag it, or pick a corner), size and look. |
@@ -38,13 +38,23 @@ The now-playing pill reads Windows' own media controls, so there is no login and
 
 ### Map Merge
 
-Newer arenas are built from separate files that the map loads by name: a `_Field` file with the stadium (pitch, walls, goals, stands), `_OOB` files with the surroundings, and effects files. Merging replaces one arena's `_Field` file with another's. On the test machine 18 arenas are built this way; the rest (DFH Stadium, Mannfield, Beckwith Park and other older ones) are a single file and cannot be taken apart.
+Any two standard soccar arenas can be merged (61 on the test machine). Arenas are built from a main `_P` file plus parts it loads by name: newer ones have a `_Field` file with the stadium (pitch, walls, goals, stands) and `_OOB` files with the surroundings; older ones have the stadium built into the main file, some with separate surroundings. Boostpad picks the first way that fits the pair and says which before you merge:
+
+| Way | When | What is written | Play |
+| --- | --- | --- | --- |
+| Stadium | both arenas have a `_Field` file | the other arena's `_Field` becomes a copy of the stadium arena's | the other arena |
+| Surroundings | the stadium arena has its stadium in its main file and separate `_OOB` files, and the other arena has surroundings files | the stadium arena's `_OOB` files become copies of the other arena's | the stadium arena |
+| Whole arena | anything else | the other arena's main file becomes a copy of the stadium arena's | the other arena |
+
+Checked in game on the test machine: Neon Fields stadium in AquaDome, Forbidden Temple (Fire & Ice) stadium in Salty Shores (Night) (stadium way), Salty Shores surroundings around DFH Stadium (10th Anniversary) (surroundings way; DFH's own city stays, it is in its main file), and Mannfield played as Neon Fields (whole arena). The surroundings way is not used for arenas with a `_Field` file, because their `_OOB` files hold part of the stands: tried on Champions Field, it took away the upper ring and roof and left the crowd in the air. Hoops, Dropshot, Snow Day and odd-shaped arenas are left out, because the pitch shape comes with the stadium.
+
+Changes are written while Rocket League is closed. The game keeps the arena files it read at start, so a file changed while it runs only shows after a restart.
 
 Snow works two ways. Four arena families have a snowy version in the game (DFH Stadium, Mannfield, Beckwith Park, Utopia Coliseum), which is swapped in whole. Arenas with a separate effects file can take the falling-snow effects from Forbidden Temple (Fire & Ice) in place of their own. Other arenas have nowhere to put snow.
 
 **Same arena every match** makes every standard soccar arena file a copy of the one you pick, so whatever arena a match is played in, you see that one. Rocket Labs, Hoops, Dropshot, Snow Day, Knockout and odd-shaped arenas are left alone. The originals are backed up first, which takes about 1.3 GB until you turn it off.
 
-None of this has been confirmed in game yet.
+Snow and same-arena-every-match have not been checked in game yet.
 
 ## What works
 
@@ -56,7 +66,7 @@ None of this has been confirmed in game yet.
 | Item swaps | **Experimental.** The package rewrite is tested structurally (see below) but nobody has yet confirmed the result in game |
 | Workshop maps | File replacement is tested; whether a given map loads depends on the file |
 | Overlays, profile | Working. The now-playing reader is tested against a real Windows media session (title, artist, cover, pause) and the controller drawing against a real pad; the overlays have not been checked over the running game |
-| Map Merge | **Experimental.** The arena scan and the file replacement are tested; the result in game is not |
+| Map Merge | **Experimental.** The arena scan and the file replacement are tested; each of the three merge ways has been checked in game on one or two arenas, not on every pair. Snow and same-arena-every-match are not checked in game |
 
 Fixed in 0.1.1: when the item you own and the new look were encrypted with different keys, 0.1.0 wrote the swapped file with the wrong one and the game crashed when it loaded the item. Swaps and arena changes are now written with the key of the file they replace, and anything 0.1.0 wrote wrongly is rebuilt automatically the next time Boostpad runs with the game closed.
 

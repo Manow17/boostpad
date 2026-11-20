@@ -186,6 +186,40 @@ function makeEngine(cooked, running = { value: false }) {
     assert.deepStrictEqual(['CS_Field', 'CS_OOB2', 'CHN_Stadium_VFX', 'CS_Lights', 'Park_SFX'].map(arenas.partKind), ['field', 'surroundings', 'effects', 'lights', 'audio']);
   });
 
+  test('every pair of standard arenas gets a merge, the best kind that fits', () => {
+    const part = (file) => ({ file, kind: arenas.partKind(file.replace(/\.upk$/, '')) });
+    const arena = (id, name, parts, standard = true) => ({
+      id, name, file: `${id}.upk`, standard, parts: parts.map(part),
+      field: (parts.find((p) => /_Field\.upk$/.test(p)) || null),
+    });
+    const beach = arena('beach_p', 'Salty Shores', ['Beach_Field.upk', 'Beach_OOB.upk', 'Beach_OOB2.upk']);
+    const cs = arena('cs_p', 'Champions Field', ['CS_Field.upk', 'CS_OOB.upk', 'CS_OOB2.upk']);
+    const tenth = arena('stadium_10a_p', 'DFH Stadium (10th Anniversary)', ['Stadium_10A_OOB.upk', 'Stadium_10A_SFX.upk']);
+    const dusk = arena('ff_dusk_p', 'Estadio Vida', ['FF_Dusk_OOB.upk', 'FF_Dusk_BlueOOB.upk', 'FF_Dusk_SFX.upk']);
+    const park = arena('park_p', 'Beckwith Park', ['Park_SFX.upk']);
+    const hoops = arena('hoopsstadium_p', 'Dunk House', [], false);
+    const all = [beach, cs, tenth, dusk, park, hoops];
+    const pairs = (p) => p.ops.map((o) => `${o.gameFile}<-${o.sourceGameFile}`);
+    // both have a stadium part: the stadium is swapped, play the other arena
+    let p = arenas.mergePlan(beach, cs, all);
+    assert.deepStrictEqual([p.how, pairs(p), p.play.map((a) => a.id)], ['stadium', ['CS_Field.upk<-Beach_Field.upk'], ['cs_p']]);
+    // a single-file stadium with outside parts takes the other arena's outside parts; extras get them again
+    p = arenas.mergePlan(dusk, beach, all);
+    assert.deepStrictEqual([p.how, pairs(p), p.play.map((a) => a.id)], ['surroundings', ['FF_Dusk_OOB.upk<-Beach_OOB.upk', 'FF_Dusk_BlueOOB.upk<-Beach_OOB2.upk'], ['ff_dusk_p']]);
+    p = arenas.mergePlan(dusk, tenth, all);
+    assert.deepStrictEqual(pairs(p), ['FF_Dusk_OOB.upk<-Stadium_10A_OOB.upk', 'FF_Dusk_BlueOOB.upk<-Stadium_10A_OOB.upk']);
+    // an arena with a stadium part keeps its outside parts (part of its stands live there): whole arena instead
+    p = arenas.mergePlan(cs, tenth, all);
+    assert.deepStrictEqual([p.how, pairs(p)], ['whole', ['stadium_10a_p.upk<-cs_p.upk']]);
+    p = arenas.mergePlan(park, beach, all);
+    assert.deepStrictEqual([p.how, pairs(p), p.play.map((a) => a.id)], ['whole', ['beach_p.upk<-park_p.upk'], ['beach_p']]);
+    // every file of one merge shares a group, so it is undone as one
+    assert.ok(arenas.mergePlan(dusk, beach, all).ops.every((o) => o.group === 'merge:ff_dusk_p:beach_p' && o.label === 'Estadio Vida stadium in Salty Shores'));
+    // a different pitch cannot be swapped whole
+    assert.strictEqual(arenas.mergePlan(park, hoops, all).how, 'none');
+    assert.strictEqual(arenas.mergePlan(park, park, all).how, 'none');
+  });
+
   test('arenas are scanned from the install with their parts', () => {
     const cache = {};
     const list = arenas.scanArenas(real, cache);
@@ -194,8 +228,10 @@ function makeEngine(cooked, running = { value: false }) {
     assert.strictEqual(cs.field.toLowerCase(), 'cs_field.upk');
     assert.strictEqual(park.field, null, 'Beckwith Park is a single file');
     assert.strictEqual(park.snow.how, 'version');
-    assert.deepStrictEqual(arenas.mergeOp(beach, cs), { kind: 'copy', gameFile: cs.field, sourceGameFile: beach.field, category: 'map', label: 'Salty Shores stadium in Champions Field' });
-    assert.throws(() => arenas.mergeOp(park, cs), /separate stadium part/);
+    // scanned without the game's text, so "standard" is not known here
+    const plan = arenas.mergePlan({ ...beach, standard: true }, { ...cs, standard: true }, list);
+    assert.strictEqual(plan.how, 'stadium');
+    assert.deepStrictEqual(plan.ops.map((o) => [o.gameFile, o.sourceGameFile]), [[cs.field, beach.field]]);
     const again = arenas.scanArenas(real, cache); // second pass comes from the cache
     assert.strictEqual(again.length, list.length);
     console.log(`        ${list.length} arenas, ${list.filter((a) => a.field).length} with a stadium part, ${list.filter((a) => a.snow).length} with a snow option`);

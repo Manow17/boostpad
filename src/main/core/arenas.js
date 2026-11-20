@@ -114,15 +114,57 @@ function everyMatchOps(chosen, arenas) {
   }));
 }
 
-// The stadium of `donor` placed in the surroundings of `base`: base's field file becomes a copy of donor's.
-function mergeOp(donor, base) {
-  if (!donor.field || !base.field) throw new Error('Both arenas need a separate stadium part');
-  if (donor.id === base.id) throw new Error('Pick two different arenas');
-  return { kind: 'copy', gameFile: base.field, sourceGameFile: donor.field, category: 'map', label: `${donor.name} stadium in ${base.name}` };
+// Parts that hold what lies outside the stadium walls, the main one first.
+const OUTSIDE = /(OOB|Mountains|Buildings|Trees|DriftMtn|_Sky)/i;
+function outsideParts(arena) {
+  const main = (p) => (/_OOB(_P)?\.upk$/i.test(p.file) ? 0 : 1);
+  return arena.parts.filter((p) => p.kind === 'surroundings' && OUTSIDE.test(p.file))
+    .sort((a, b) => main(a) - main(b) || a.file.localeCompare(b.file));
+}
+
+/**
+ * How to show the stadium of `stadium` in the surroundings of `place`. Three ways,
+ * the first that fits:
+ *   stadium       both have a separate stadium part: place's becomes a copy of stadium's.
+ *                 Play `place`.
+ *   surroundings  `stadium` is one main file plus separate surroundings parts, and place
+ *                 has surroundings parts: stadium's become copies of place's. Play `stadium`.
+ *   whole         they cannot be taken apart, so the whole of `stadium` is played in
+ *                 place of `place`.
+ * Standard soccar arenas only: the pitch shape comes with the stadium.
+ * Returns { how, ops, play: [arenas to play to see it], note } or { how: 'none', reason }.
+ */
+function mergePlan(stadium, place, all = []) {
+  if (!stadium || !place) throw new Error('Arena not found');
+  if (stadium.id === place.id) return { how: 'none', reason: 'Pick two different arenas.' };
+  // the pitch shape comes with the stadium; only standard soccar pitches are the same everywhere
+  const odd = [stadium, place].filter((a) => !a.standard);
+  if (odd.length) return { how: 'none', reason: `${odd.map((a) => a.name).join(' and ')} ${odd.length > 1 ? 'have' : 'has'} a pitch of another shape, so the walls and the ball would not line up.` };
+  const label = `${stadium.name} stadium in ${place.name}`;
+  const group = `merge:${stadium.id}:${place.id}`;
+  const copy = (gameFile, sourceGameFile) => ({ kind: 'copy', gameFile, sourceGameFile, category: 'map', group, label });
+  if (stadium.field && place.field) {
+    return { how: 'stadium', ops: [copy(place.field, stadium.field)], play: arenasUsing(all, place.field) };
+  }
+  // Only for a stadium arena without a separate stadium part: its stands are in its main
+  // file and stay. Arenas with one keep part of the stands in their outside files
+  // (Champions Field's upper ring is in CS_OOB2), so swapping those leaves the crowd in the air.
+  const mine = stadium.field ? [] : outsideParts(stadium), theirs = outsideParts(place);
+  if (mine.length && theirs.length) {
+    // more parts than the other arena has: the extra ones get its parts again, so none of the old surroundings stay
+    const ops = mine.map((p, i) => copy(p.file, theirs[i % theirs.length].file))
+      .filter((op) => op.gameFile.toLowerCase() !== op.sourceGameFile.toLowerCase());
+    const play = arenasUsing(all, mine[0].file);
+    // no ops: the two already share their surroundings, so only a whole swap changes anything
+    if (ops.length) {
+      return { how: 'surroundings', ops, play, note: play.length > 1 ? 'Those arenas share these surroundings, so all of them change.' : '' };
+    }
+  }
+  return { how: 'whole', ops: [copy(place.file, stadium.file)], play: [place] };
 }
 function snowOp(arena) {
   if (!arena.snow) throw new Error('This arena has no part where snow can go');
   return { kind: 'copy', gameFile: arena.snow.gameFile, sourceGameFile: arena.snow.sourceGameFile, category: 'map', label: `Snow on ${arena.name}` };
 }
 
-module.exports = { scanArenas, arenaName, partKind, mergeOp, snowOp, arenasUsing, everyMatchOps };
+module.exports = { scanArenas, arenaName, partKind, mergePlan, outsideParts, snowOp, arenasUsing, everyMatchOps };

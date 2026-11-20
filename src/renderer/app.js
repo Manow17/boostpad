@@ -524,16 +524,25 @@ const shownIn = (gameFile) => arenas.filter((a) => a.file.toLowerCase() === game
 const playHint = (list) => (list.length ? `Play ${list.map((a) => a.name).join(' or ')} to see it.` : '');
 
 views.lab = () => {
-  const root = bento(noteTile('warn', 's12', 'Experimental. This is built from how the game stores its arenas and has not been confirmed in game. Only you see the result, and every change can be reverted below. To pick an arena yourself, use Free Play, Exhibition or a Private Match.'));
+  const root = bento(noteTile('warn', 's12', 'Experimental. Each kind of merge has been tried in game on a few arenas, not on every pair. Only you see the result, and every change can be reverted below. To pick an arena yourself, use Free Play, Exhibition or a Private Match.'));
   if (!arenas) {
     api('arenas').then((list) => { arenas = list; if (ui.tab === 'lab') render(true); });
     root.append(tile('s12', empty('maps', 'Reading the arenas', 'Finding the parts each arena is built from.')));
     return root;
   }
   const byId = (id) => arenas.find((a) => a.id === id);
-  const split = arenas.filter((a) => a.field && a.playable), snowy = arenas.filter((a) => a.snow && a.playable), standard = arenas.filter((a) => a.standard);
-  lab.donor ??= (split[0] || {}).id;
-  lab.base ??= (split[1] || {}).id;
+  // every standard soccar arena: they all have the same pitch, so any two can be merged
+  const split = arenas.filter((a) => a.standard), snowy = arenas.filter((a) => a.snow && a.playable), standard = arenas.filter((a) => a.standard);
+  lab.donor ??= (split.find((a) => a.field) || split[0] || {}).id;
+  lab.base ??= (split.filter((a) => a.field)[1] || split[1] || {}).id;
+  // how the chosen pair would be merged, asked of the main process once per pair
+  const pairKey = `${lab.donor}>${lab.base}`;
+  if (lab.planFor !== pairKey) {
+    lab.planFor = pairKey;
+    lab.plan = null;
+    api('mergePlan', lab.donor, lab.base).then((p) => { if (lab.planFor === pairKey) { lab.plan = p; if (ui.tab === 'lab') render(true); } }).catch(() => {});
+  }
+  const plan = lab.plan;
   lab.snow ??= (snowy[0] || {}).id;
   lab.every ??= ((standard.find((a) => a.id === 'stadium_p') || standard[0]) || {}).id;
   const donor = byId(lab.donor), base = byId(lab.base), snow = byId(lab.snow), every = byId(lab.every);
@@ -561,14 +570,14 @@ views.lab = () => {
         : every ? `Replaces ${targets.length} arena files. The originals are backed up first, which takes about ${gb(targets.reduce((s, a) => s + a.size, 0))} of disk space until you turn it off.` : ''),
       h('p', { class: 'muted small' }, 'Rocket Labs, Hoops, Dropshot, Snow Day, Knockout and the odd-shaped arenas (Badlands, Tokyo Underpass, ARCtagon) are left as they are.')),
     tile('s7', head('Merge two arenas', h('span', { class: 'tag' }, `${split.length} arenas`)),
-      h('p', { class: 'muted' }, 'Takes the stadium from one arena (pitch, walls, goals and stands) and puts it in the surroundings of another.'),
+      h('p', { class: 'muted' }, 'Puts the stadium of one arena (pitch, walls, goals and stands) in the surroundings of another. Any two soccar arenas can be picked; Hoops, Dropshot, Snow Day and odd-shaped arenas have a different pitch and are left out.'),
       h('div', { class: 'fields' },
         h('b', {}, 'Stadium from'), select(options(split), lab.donor, choose('donor'), 300),
         h('b', {}, 'Placed in'), select(options(split), lab.base, choose('base'), 300)),
-      donor && base && h('p', { class: 'small' }, donor.id === base.id ? 'Pick two different arenas.' : h('b', {}, playHint(shownIn(base.field)))),
-      h('button', { class: 'btn primary lg push', disabled: !donor || !base || donor.id === base.id,
-        onclick: () => run(() => api('mergeArenas', lab.donor, lab.base), (r) => `${r.queued ? 'Queued.' : 'Merged.'} ${playHint(shownIn(base.field))}`) }, S.running ? 'Queue merge' : 'Merge'),
-      h('p', { class: 'muted small' }, 'Only these arenas are stored with the stadium as a separate part. The others have the stadium and its surroundings baked together, so they cannot be taken apart.')),
+      donor && base && mergeHow(plan, donor, base),
+      h('button', { class: 'btn primary lg push', disabled: !plan || plan.how === 'none',
+        onclick: () => run(() => api('mergeArenas', lab.donor, lab.base), (r) => `${r.queued ? 'Queued.' : 'Merged.'} ${playHint(r.play.map((name) => ({ name })))}`) },
+      S.running ? 'Queue merge' : 'Merge')),
     tile('s5', head('Add snow', h('span', { class: 'tag' }, `${snowy.length} arenas`)),
       h('p', { class: 'muted' }, 'Turns an arena snowy, where the game has something to do it with.'),
       select(options(snowy), lab.snow, choose('snow')),
@@ -578,18 +587,45 @@ views.lab = () => {
       snow && h('p', { class: 'small' }, h('b', {}, playHint(shownIn(snow.snow.gameFile)))),
       h('button', { class: 'btn primary lg push', disabled: !snow, onclick: () => run(() => api('snowArena', lab.snow), (r) => `${r.queued ? 'Queued.' : 'Snow added.'} ${playHint(shownIn(snow.snow.gameFile))}`) }, S.running ? 'Queue snow' : 'Add snow')));
 
-  // merges and snow, one row each; "every match" is the tile above
-  const mine = [...S.engine.queue.filter((q) => q.op && q.op.kind === 'copy' && q.op.group !== 'everymatch').map((q) => ({ q, op: q.op })),
-    ...S.engine.active.filter((r) => r.op.kind === 'copy' && r.op.group !== 'everymatch').map((r) => ({ r, op: r.op }))];
+  // merges and snow, one row each (a merge of several files is one row); "every match" is the tile above
+  const rows = new Map();
+  const add = (op, key, queued) => {
+    const id = op.group || key;
+    const row = rows.get(id) || { id, op, keys: [], queued: false };
+    row.keys.push(key);
+    row.queued ||= queued;
+    rows.set(id, row);
+  };
+  for (const q of S.engine.queue) if (q.op && q.op.kind === 'copy' && q.op.group !== 'everymatch') add(q.op, q.key, true);
+  for (const r of S.engine.active) if (r.op.kind === 'copy' && r.op.group !== 'everymatch') add(r.op, r.key, false);
+  const mine = [...rows.values()];
+  const undo = (row) => (row.op.group ? api('revertGroup', row.op.group)
+    : row.queued ? api('unqueue', row.keys[0]) : api('revert', row.keys[0]));
   root.append(tile('s12', head('Changed arenas', h('span', { class: 'tag' }, mine.length)),
-    mine.length ? h('div', { class: 'list' }, mine.map(({ q, r, op }) => h('div', { class: 'item' }, art(op.label, 'maps'),
-      h('div', { class: 'grow' }, h('b', {}, op.label), h('div', { class: 'small' }, playHint(shownIn(op.gameFile)) || op.gameFile)),
-      q && h('span', { class: 'tag' }, 'Queued'),
-      q ? h('button', { class: 'btn sm', onclick: () => run(() => api('unqueue', q.key)) }, 'Cancel')
-        : h('button', { class: 'btn sm', onclick: () => run(() => api('revert', r.key), S.running ? 'Revert queued until the game closes.' : 'Original arena restored.') }, 'Revert'))))
+    mine.length ? h('div', { class: 'list' }, mine.map((row) => h('div', { class: 'item' }, art(row.op.label, 'maps'),
+      h('div', { class: 'grow' }, h('b', {}, row.op.label), h('div', { class: 'small' }, playHint(shownIn(row.op.gameFile)) || row.op.gameFile)),
+      row.queued && h('span', { class: 'tag' }, 'Queued'),
+      h('button', { class: 'btn sm', onclick: () => run(() => undo(row), S.running ? 'Undone when the game closes.' : 'Original arena restored.') }, row.queued ? 'Cancel' : 'Revert'))))
       : h('p', { class: 'muted' }, 'Nothing merged or snowed. Your arenas are original.')));
   return root;
 };
+
+// What a merge of the chosen pair will do, in words.
+function mergeHow(plan, donor, base) {
+  if (donor.id === base.id) return h('p', { class: 'small' }, 'Pick two different arenas.');
+  if (!plan) return h('p', { class: 'muted small' }, 'Working out how…');
+  if (plan.how === 'none') return h('p', { class: 'small' }, plan.reason);
+  const files = plan.files > 1 ? ` (${plan.files} files)` : '';
+  const how = {
+    stadium: `Both arenas keep their stadium in a separate file, so ${donor.name}’s stadium is put straight into ${base.name}.`,
+    surroundings: `${donor.name} keeps its stadium and gets ${base.name}’s surroundings around it${files}. Anything built into ${donor.name}’s own file, like a skyline, stays as well.`,
+    whole: `${[donor, base].find((a) => !a.field) === donor ? donor.name : base.name} has its stadium built into its main file, so these two cannot be taken apart and put back together. Instead, all of ${donor.name} is played whenever you pick ${base.name}.`,
+  }[plan.how];
+  return h('div', {},
+    h('p', { class: 'muted small' }, how),
+    h('p', { class: 'small' }, h('b', {}, playHint(plan.play.map((name) => ({ name }))))),
+    plan.note && h('p', { class: 'muted small' }, plan.note));
+}
 
 /* ---------- presets ---------- */
 
