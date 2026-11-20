@@ -272,7 +272,8 @@ function updateNav(nav) {
       ind.style.transform = `translateY(${btn.offsetTop}px)`;
     }
   }
-  const pending = S.engine.active.length + S.engine.queue.length;
+  // the badge sits on the Garage, so it counts item swaps only
+  const pending = S.engine.active.filter((r) => r.op.kind === 'swap').length + S.engine.queue.filter((q) => !q.op || q.op.kind === 'swap').length;
   const count = nav.querySelector('.count');
   count.hidden = !pending;
   count.textContent = pending;
@@ -443,7 +444,7 @@ views.garage = () => {
   fill();
 
   // Everything Boostpad has put in the game, or will when it closes, with a way back.
-  const changes = [...S.engine.queue.map((q) => ({ q, op: q.op })), ...S.engine.active.map((r) => ({ r, op: r.op }))];
+  const changes = [...S.engine.queue.filter((q) => !q.op || q.op.kind === 'swap').map((q) => ({ q, op: q.op })), ...S.engine.active.filter((r) => r.op.kind === 'swap').map((r) => ({ r, op: r.op }))];
   const applied = changes.length ? tile('s12 applied', h('h3', {}, 'In your game'),
     changes.map(({ q, r, op }) => {
       const label = op ? (op.label || op.gameFile) : q.key;
@@ -500,7 +501,7 @@ views.maps = () => {
   const loaded = S.engine.active.find((r) => r.key === slot);
   const queued = S.engine.queue.find((q) => q.key === slot && q.op);
   if (!maps.length) { root.append(tile('s12', empty('maps', 'No maps yet', 'Your workshop maps show up here.'))); return root; }
-  root.append(maps.map((m) => {
+  root.append(...maps.map((m) => {
     const isLoaded = loaded && loaded.op.from && loaded.op.from.endsWith(m.id), isQueued = queued && queued.op.from && queued.op.from.endsWith(m.id);
     return tile('card',
       h('div', { class: 'row' }, art(m.name, 'maps'), h('div', { class: 'grow' }, h('b', { class: 'clip' }, m.name), h('div', { class: 'muted small' }, `${(m.size / 1048576).toFixed(1)} MB`)),
@@ -516,51 +517,77 @@ views.maps = () => {
 
 // Map Merge works on the arenas that ship with the game (see main/core/arenas.js).
 let arenas = null;
-const lab = { donor: null, base: null, snow: null };
+const lab = { donor: null, base: null, snow: null, every: null };
+const gb = (bytes) => `${(bytes / 1e9).toFixed(1)} GB`;
+// The arenas that show a changed file: the arena itself, or every arena that loads that part.
+const shownIn = (gameFile) => arenas.filter((a) => a.file.toLowerCase() === gameFile.toLowerCase() || a.parts.some((p) => p.file.toLowerCase() === gameFile.toLowerCase()));
+const playHint = (list) => (list.length ? `Play ${list.map((a) => a.name).join(' or ')} to see it.` : '');
+
 views.lab = () => {
-  const root = bento(noteTile('warn', 's12', 'Experimental. This is built from how the game stores its arenas and has not been confirmed in game. Only you see the result, and every change can be reverted below.'));
+  const root = bento(noteTile('warn', 's12', 'Experimental. This is built from how the game stores its arenas and has not been confirmed in game. Only you see the result, and every change can be reverted below. To pick an arena yourself, use Free Play, Exhibition or a Private Match.'));
   if (!arenas) {
     api('arenas').then((list) => { arenas = list; if (ui.tab === 'lab') render(true); });
     root.append(tile('s12', empty('maps', 'Reading the arenas', 'Finding the parts each arena is built from.')));
     return root;
   }
   const byId = (id) => arenas.find((a) => a.id === id);
-  const split = arenas.filter((a) => a.field), snowy = arenas.filter((a) => a.snow);
+  const split = arenas.filter((a) => a.field && a.playable), snowy = arenas.filter((a) => a.snow && a.playable), standard = arenas.filter((a) => a.standard);
   lab.donor ??= (split[0] || {}).id;
   lab.base ??= (split[1] || {}).id;
   lab.snow ??= (snowy[0] || {}).id;
-  const donor = byId(lab.donor), base = byId(lab.base), snow = byId(lab.snow);
+  lab.every ??= ((standard.find((a) => a.id === 'stadium_p') || standard[0]) || {}).id;
+  const donor = byId(lab.donor), base = byId(lab.base), snow = byId(lab.snow), every = byId(lab.every);
   const options = (list) => list.map((a) => [a.id, a.name]);
   const choose = (key) => (id) => { lab[key] = id; render(); };
 
+  // "same arena every match": what is on now, and what it would cost on disk
+  const everyOn = S.engine.active.filter((r) => r.op.group === 'everymatch');
+  const everyQueued = S.engine.queue.filter((q) => q.op && q.op.group === 'everymatch');
+  const current = (everyOn[0] || everyQueued[0] || {}).op;
+  const currentArena = current && arenas.find((a) => a.file === current.sourceGameFile);
+  const targets = every ? standard.filter((a) => a.id !== every.id) : [];
+
   root.append(
+    tile('s12 ink', head('Same arena every match', current && h('span', { class: 'tag on' }, everyQueued.length ? 'Queued' : 'On')),
+      h('p', { class: 'muted' }, 'Whatever arena a match is played in, you see the one you pick here: online, offline and in Free Play. Everyone else still sees the real arena. All standard arenas have the same pitch, so the ball, walls and goals line up.'),
+      h('div', { class: 'row wrap' },
+        select(options(standard), lab.every, choose('every'), 320),
+        h('button', { class: 'btn primary', disabled: !every || (currentArena && currentArena.id === lab.every && !everyQueued.length),
+          onclick: () => run(() => api('everyMatch', lab.every), (r) => (r.queued ? `Queued: ${every.name} goes in when Rocket League closes.` : `Every match now shows ${every.name}.`)) },
+        current ? 'Switch to this arena' : 'Use in every match'),
+        current && h('button', { class: 'btn', onclick: () => run(() => api('everyMatchOff'), S.running ? 'Turning it off when the game closes.' : 'Your arenas are back to normal.') }, 'Turn off')),
+      h('p', { class: 'muted small' }, current
+        ? `Now: ${currentArena ? currentArena.name : current.sourceGameFile} in every match (${everyOn.length} arenas replaced${everyQueued.length ? `, ${everyQueued.length} waiting for the game to close` : ''}).`
+        : every ? `Replaces ${targets.length} arena files. The originals are backed up first, which takes about ${gb(targets.reduce((s, a) => s + a.size, 0))} of disk space until you turn it off.` : ''),
+      h('p', { class: 'muted small' }, 'Rocket Labs, Hoops, Dropshot, Snow Day, Knockout and the odd-shaped arenas (Badlands, Tokyo Underpass, ARCtagon) are left as they are.')),
     tile('s7', head('Merge two arenas', h('span', { class: 'tag' }, `${split.length} arenas`)),
       h('p', { class: 'muted' }, 'Takes the stadium from one arena (pitch, walls, goals and stands) and puts it in the surroundings of another.'),
       h('div', { class: 'fields' },
         h('b', {}, 'Stadium from'), select(options(split), lab.donor, choose('donor'), 300),
         h('b', {}, 'Placed in'), select(options(split), lab.base, choose('base'), 300)),
-      donor && base && h('p', { class: 'muted small' }, donor.id === base.id ? 'Pick two different arenas.'
-        : `${base.field} is replaced by a copy of ${donor.field}. Play ${base.name} to see it.`),
+      donor && base && h('p', { class: 'small' }, donor.id === base.id ? 'Pick two different arenas.' : h('b', {}, playHint(shownIn(base.field)))),
       h('button', { class: 'btn primary lg push', disabled: !donor || !base || donor.id === base.id,
-        onclick: () => run(() => api('mergeArenas', lab.donor, lab.base), queuedMsg) }, S.running ? 'Queue merge' : 'Merge'),
-      h('p', { class: 'muted small' }, `The other ${arenas.length - split.length} arenas are stored as a single file, with the stadium and its surroundings baked together, so they cannot be taken apart.`)),
+        onclick: () => run(() => api('mergeArenas', lab.donor, lab.base), (r) => `${r.queued ? 'Queued.' : 'Merged.'} ${playHint(shownIn(base.field))}`) }, S.running ? 'Queue merge' : 'Merge'),
+      h('p', { class: 'muted small' }, 'Only these arenas are stored with the stadium as a separate part. The others have the stadium and its surroundings baked together, so they cannot be taken apart.')),
     tile('s5', head('Add snow', h('span', { class: 'tag' }, `${snowy.length} arenas`)),
       h('p', { class: 'muted' }, 'Turns an arena snowy, where the game has something to do it with.'),
       select(options(snowy), lab.snow, choose('snow')),
       snow && h('p', { class: 'muted small' }, snow.snow.how === 'version'
-        ? `This arena has a snowy version in the game: ${snow.snow.gameFile} is replaced by ${snow.snow.sourceGameFile}.`
-        : `Uses the falling-snow effects from Forbidden Temple (Fire & Ice) in place of this arena’s own effects: ${snow.snow.gameFile} is replaced by ${snow.snow.sourceGameFile}.`),
-      h('button', { class: 'btn primary lg push', disabled: !snow, onclick: () => run(() => api('snowArena', lab.snow), queuedMsg) }, S.running ? 'Queue snow' : 'Add snow'),
-      h('p', { class: 'muted small' }, 'Arenas that are not in this list have no snowy version and no separate effects part, so there is nowhere to put snow.')));
+        ? 'Uses the snowy version of this arena that is in the game.'
+        : 'Uses the falling-snow effects from Forbidden Temple (Fire & Ice) in place of this arena’s own effects.'),
+      snow && h('p', { class: 'small' }, h('b', {}, playHint(shownIn(snow.snow.gameFile)))),
+      h('button', { class: 'btn primary lg push', disabled: !snow, onclick: () => run(() => api('snowArena', lab.snow), (r) => `${r.queued ? 'Queued.' : 'Snow added.'} ${playHint(shownIn(snow.snow.gameFile))}`) }, S.running ? 'Queue snow' : 'Add snow')));
 
-  const mine = [...S.engine.queue.filter((q) => q.op && q.op.kind === 'copy').map((q) => ({ q, op: q.op })), ...S.engine.active.filter((r) => r.op.kind === 'copy').map((r) => ({ r, op: r.op }))];
+  // merges and snow, one row each; "every match" is the tile above
+  const mine = [...S.engine.queue.filter((q) => q.op && q.op.kind === 'copy' && q.op.group !== 'everymatch').map((q) => ({ q, op: q.op })),
+    ...S.engine.active.filter((r) => r.op.kind === 'copy' && r.op.group !== 'everymatch').map((r) => ({ r, op: r.op }))];
   root.append(tile('s12', head('Changed arenas', h('span', { class: 'tag' }, mine.length)),
     mine.length ? h('div', { class: 'list' }, mine.map(({ q, r, op }) => h('div', { class: 'item' }, art(op.label, 'maps'),
-      h('div', { class: 'grow' }, h('b', {}, op.label), h('div', { class: 'muted small' }, `${op.gameFile} ← ${op.sourceGameFile}`)),
+      h('div', { class: 'grow' }, h('b', {}, op.label), h('div', { class: 'small' }, playHint(shownIn(op.gameFile)) || op.gameFile)),
       q && h('span', { class: 'tag' }, 'Queued'),
       q ? h('button', { class: 'btn sm', onclick: () => run(() => api('unqueue', q.key)) }, 'Cancel')
         : h('button', { class: 'btn sm', onclick: () => run(() => api('revert', r.key), S.running ? 'Revert queued until the game closes.' : 'Original arena restored.') }, 'Revert'))))
-      : h('p', { class: 'muted' }, 'Nothing changed. Your arenas are original.')));
+      : h('p', { class: 'muted' }, 'Nothing merged or snowed. Your arenas are original.')));
   return root;
 };
 
@@ -575,14 +602,13 @@ views.presets = () => {
       h('div', { class: 'row push' }, name, h('button', { class: 'btn primary', disabled: !n, onclick: () => run(() => api('presetSave', name.value), 'Preset saved.') }, 'Save'))),
     tile('s5', head('Import'), h('p', { class: 'muted' }, 'Paste a preset code to add that setup.'),
       h('div', { class: 'row push' }, paste, h('button', { class: 'btn', onclick: () => run(() => api('presetImport', paste.value), 'Preset imported.') }, 'Import'))));
-  root.append(list.length ? list.map((p) => tile('card',
+  root.append(...(list.length ? list : [null]).map((p) => (!p ? tile('s12', empty('presets', 'No presets yet', 'Set your car up the way you like, then save it here.')) : tile('card',
     h('div', { class: 'row' }, art(p.name, 'presets'), h('div', { class: 'grow' }, h('b', { class: 'clip' }, p.name), h('div', { class: 'muted small' }, `${plural(p.ops.length, 'change')} · ${new Date(p.savedAt).toLocaleDateString()}`))),
     h('p', { class: 'muted small' }, p.ops.slice(0, 4).map((o) => o.label).join(' · ') || 'Empty'),
     h('div', { class: 'row wrap push' },
       h('button', { class: 'btn primary grow', onclick: () => run(() => api('presetLoad', p.id), (r) => (r.errors.length ? `Loaded with ${plural(r.errors.length, 'problem')}: ${r.errors[0]}` : 'Preset loaded.')) }, 'Load'),
       h('button', { class: 'btn', onclick: async () => { await navigator.clipboard.writeText(await api('presetExport', p.id)); toast('Preset code copied.'); } }, 'Copy code'),
-      h('button', { class: 'btn danger', onclick: () => run(() => api('presetDelete', p.id)) }, 'Delete'))))
-    : tile('s12', empty('presets', 'No presets yet', 'Set your car up the way you like, then save it here.')));
+      h('button', { class: 'btn danger', onclick: () => run(() => api('presetDelete', p.id)) }, 'Delete'))))));
   return root;
 };
 
@@ -595,8 +621,8 @@ const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStar
 const mediaNow = () => Math.max(0, Math.min(media.duration || 0, media.position + (media.playing ? (Date.now() - media.updated) / 1000 : 0)));
 const ANCHORS = [['tl', 'Top left'], ['tc', 'Top centre'], ['tr', 'Top right'], ['bl', 'Bottom left'], ['bc', 'Bottom centre'], ['br', 'Bottom right']];
 const PAD_LOOKS = [
-  ['White', '#f2f3f5', '#1b1c21'], ['Black', '#1d1f24', '#3a3d46'], ['Grey', '#8d929d', '#1b1c21'], ['Red', '#c8102e', '#1b1c21'],
-  ['Blue', '#1f6feb', '#101826'], ['Purple', '#7c4dff', '#17122b'], ['Pink', '#f472b6', '#2a1420'], ['Gold', '#d4a72c', '#1b1c21'],
+  ['Midnight black', '#14161b', '#23262d'], ['White', '#e9ebef', '#c9cdd4'], ['Grey', '#6b7079', '#3c4048'], ['Cosmic red', '#8f1a24', '#2a0d11'],
+  ['Starlight blue', '#2c63c9', '#16305e'], ['Galactic purple', '#4b2f86', '#241640'], ['Nova pink', '#d8679a', '#5a2440'], ['Gold', '#a8841f', '#3f300b'],
 ];
 const GLOWS = ['#00d8c8', '#38bdf8', '#818cf8', '#f472b6', '#fb7185', '#fb923c', '#facc15', '#a3e635', '#ffffff'];
 
@@ -632,13 +658,17 @@ views.overlay = () => {
     sizeRow('music', 70, 160), place('music'));
 
   // --- controller ---
-  const preview = Pad.mount(h('div', { class: 'padpreview' }));
+  // 'auto' follows the controller that is plugged in; the preview shows that one too
+  const shownModel = () => (o.pad.model && o.pad.model !== 'auto' ? o.pad.model : Pad.guess(Pad.first()) || 'ps5');
+  const preview = Pad.mount(h('div', { class: 'padpreview' }), shownModel());
   Pad.style(preview, o.pad);
   const look = PAD_LOOKS.find(([, body, keys]) => body === o.pad.body && keys === o.pad.keys);
   const opacityLabel = h('div', { class: 'muted small' }, `${o.pad.opacity}%`);
   const padTile = tile(`s6${o.pad.on ? ' ink' : ''}`, head('Controller', toggle(o.pad.on, (v) => upd('pad', { on: v }))),
     h('p', { class: 'muted' }, 'Shows every button, trigger and stick you press. Press something on your controller to try it here.'),
     preview,
+    h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, 'Controller'), h('div', { class: 'muted small' }, 'Automatic picks the one that is plugged in.')),
+      select([['auto', 'Automatic'], ...Pad.models()], o.pad.model || 'auto', (v) => upd('pad', { model: v }), 200)),
     h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, 'Colour'), h('div', { class: 'muted small' }, 'The shell and its buttons.')),
       select(PAD_LOOKS.map(([label]) => [label, label]).concat(look ? [] : [['', 'Custom']]), look ? look[0] : '', (v) => { const pick = PAD_LOOKS.find(([label]) => label === v); if (pick) upd('pad', { body: pick[1], keys: pick[2] }); }, 170)),
     h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, 'Pressed colour'), h('div', { class: 'muted small' }, 'What a button lights up in.')),
@@ -647,7 +677,7 @@ views.overlay = () => {
       slider(20, 100, o.pad.opacity, (v) => upd('pad', { opacity: v }), (v) => { opacityLabel.textContent = `${v}%`; Pad.style(preview, { ...o.pad, opacity: v }); })),
     sizeRow('pad', 50, 200), place('pad'));
 
-  overlayUI = { paint, tick, preview, root: padTile };
+  overlayUI = { paint, tick, preview, root: padTile, shownModel };
   paint();
   return bento(
     tile('s12 bar', h('div', { class: 'grow' }, h('b', {}, 'Only while playing Rocket League'), h('div', { class: 'muted small' }, 'Overlays appear when Rocket League is the window in front, and hide when you tab out.')),
@@ -662,7 +692,14 @@ const overlayLive = () => ui.tab === 'overlay' && overlayUI && overlayUI.root.is
 window.boostpad.on('media', (state) => { media = state; if (overlayLive()) overlayUI.paint(); });
 api('mediaState').then((state) => { media = state; if (overlayLive()) overlayUI.paint(); });
 setInterval(() => { if (overlayLive()) overlayUI.tick(); }, 500);
-(function padLoop() { if (overlayLive()) Pad.update(overlayUI.preview, Pad.first()); requestAnimationFrame(padLoop); }());
+(function padLoop() {
+  if (overlayLive()) {
+    const want = overlayUI.shownModel(); // a controller plugged in while the page is open
+    if (overlayUI.preview.dataset.model !== want) { Pad.mount(overlayUI.preview, want); Pad.style(overlayUI.preview, S.settings.overlay.pad); }
+    Pad.update(overlayUI.preview, Pad.first());
+  }
+  requestAnimationFrame(padLoop);
+}());
 
 /* ---------- profile ---------- */
 
@@ -718,8 +755,9 @@ views.settings = () => {
 
 /* ---------- boot ---------- */
 
-window.boostpad.on('state', ({ state, flushed }) => {
+window.boostpad.on('state', ({ state, flushed, notice }) => {
   S = state;
+  if (notice) toast(notice);
   const ok = flushed.filter((f) => f.ok).length, failed = flushed.filter((f) => !f.ok);
   if (ok) toast(`${plural(ok, 'queued change')} applied.`);
   for (const f of failed) toast(`${f.key}: ${f.message}`, true);

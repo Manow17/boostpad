@@ -15,7 +15,7 @@ const { Engine } = require('../src/main/core/engine');
 const { Store } = require('../src/main/core/store');
 const { Maps, MAP_SLOT } = require('../src/main/core/library');
 const arenas = require('../src/main/core/arenas');
-const { readLabels, applyLabels } = require('../src/main/core/labels');
+const { readLabels, readTexts, applyLabels } = require('../src/main/core/labels');
 
 const sha = (f) => crypto.createHash('sha1').update(fs.readFileSync(f)).digest('hex');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'boostpad-test-'));
@@ -199,6 +199,65 @@ function makeEngine(cooked, running = { value: false }) {
     const again = arenas.scanArenas(real, cache); // second pass comes from the cache
     assert.strictEqual(again.length, list.length);
     console.log(`        ${list.length} arenas, ${list.filter((a) => a.field).length} with a stadium part, ${list.filter((a) => a.snow).length} with a snow option`);
+  }, !real);
+
+  test('a swap is written with the key of the file it replaces', async () => {
+    const keysFile = path.join(process.env.APPDATA || '', 'boostpad', 'keys.txt');
+    if (!fs.existsSync(keysFile)) return; // needs a key list to find two items with different keys
+    const keys = upk.parseKeys(fs.readFileSync(keysFile, 'utf8'));
+    const keyOf = (f) => upk.keyOfFile(path.join(real, f), keys).toString('hex');
+    // Lunation is encrypted with a key from the list, Cosmological with the built-in one
+    const lunation = 'skin_IndigoD_SF.upk', cosmo = 'skin_bloodbros_SF.upk';
+    if (!fs.existsSync(path.join(real, lunation)) || !fs.existsSync(path.join(real, cosmo))) return;
+    const dir = fs.mkdtempSync(path.join(tmp, 'keys-'));
+    const backup = path.join(process.env.APPDATA, 'boostpad', 'backups', lunation.toLowerCase());
+    fs.copyFileSync(fs.existsSync(backup) ? backup : path.join(real, lunation), path.join(dir, lunation)); // the original, even if swapped in the game
+    fs.copyFileSync(path.join(real, cosmo), path.join(dir, cosmo));
+    const wanted = upk.keyOfFile(path.join(dir, lunation), keys).toString('hex');
+    assert.notStrictEqual(wanted, keyOf(cosmo), 'test needs two items with different keys');
+    const { engine } = makeEngine(dir);
+    engine.getKeys = () => keys;
+    await engine.apply({ kind: 'swap', sourceFile: lunation, targetFile: cosmo });
+    const written = upk.readPackageFile(path.join(dir, lunation), keys);
+    assert.strictEqual(written.key.toString('hex'), wanted, 'written with the donor key: the game cannot read it');
+    assert.ok(written.names.some((n) => n.text === 'skin_IndigoD'));
+  }, !real);
+
+  test('arena names come from the game text; every-match covers standard arenas only', () => {
+    const keysFile = path.join(process.env.APPDATA || '', 'boostpad', 'keys.txt');
+    const keys = fs.existsSync(keysFile) ? upk.parseKeys(fs.readFileSync(keysFile, 'utf8')) : [];
+    const { maps } = readTexts(real, keys);
+    if (!maps.size) return; // the game text needs a key list
+    const list = arenas.scanArenas(real, {}, keys, maps);
+    const byId = (id) => list.find((a) => a.id === id);
+    assert.strictEqual(byId('cs_day_p').name, 'Champions Field (Day)');
+    assert.strictEqual(byId('underwater_p').name, 'AquaDome');
+    assert.ok(byId('stadium_p').standard && !byId('labs_basin_p').standard && !byId('hoopsstadium_p').standard);
+    const ops = arenas.everyMatchOps(byId('stadium_p'), list);
+    assert.ok(ops.length > 30 && ops.every((o) => o.kind === 'copy' && o.sourceGameFile === byId('stadium_p').file && o.group === 'everymatch'));
+    assert.ok(!ops.some((o) => /labs_|hoops|shattershot/i.test(o.gameFile)));
+    assert.deepStrictEqual(arenas.arenasUsing(list, 'Underwater_Field.upk').map((a) => a.name), ['AquaDome']);
+  }, !real);
+
+  test('a copied arena file is written with the replaced file\'s key', async () => {
+    const keysFile = path.join(process.env.APPDATA || '', 'boostpad', 'keys.txt');
+    if (!fs.existsSync(keysFile)) return;
+    const keys = upk.parseKeys(fs.readFileSync(keysFile, 'utf8'));
+    // two small arena parts that use different keys
+    const parts = ['Music_Field.upk', 'Underwater_Field.upk', 'CS_Field.upk', 'Beach_Field.upk'].filter((f) => fs.existsSync(path.join(real, f)));
+    const keyOf = (dir, f) => upk.keyOfFile(path.join(dir, f), keys).toString('hex');
+    const backups = path.join(process.env.APPDATA, 'boostpad', 'backups');
+    const original = (f) => (fs.existsSync(path.join(backups, f.toLowerCase())) ? path.join(backups, f.toLowerCase()) : path.join(real, f));
+    const dir = fs.mkdtempSync(path.join(tmp, 'arena-'));
+    for (const f of parts) fs.copyFileSync(original(f), path.join(dir, f));
+    const pair = parts.flatMap((a) => parts.map((b) => [a, b])).find(([a, b]) => a !== b && keyOf(dir, a) !== keyOf(dir, b));
+    if (!pair) return;
+    const [dest, src] = pair, want = keyOf(dir, dest);
+    const { engine } = makeEngine(dir);
+    engine.getKeys = () => keys;
+    await engine.apply({ kind: 'copy', gameFile: dest, sourceGameFile: src });
+    assert.strictEqual(keyOf(dir, dest), want);
+    assert.deepStrictEqual(upk.readPackageFile(path.join(dir, dest), keys).names.map((n) => n.text), upk.readPackageFile(path.join(dir, src), keys).names.map((n) => n.text));
   }, !real);
 
   test('copy: one game file becomes a copy of another, and reverts', async () => {

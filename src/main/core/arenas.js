@@ -41,11 +41,17 @@ function partKind(partBase) {
 const SNOWY_VERSIONS = { stadium: 'Stadium_Winter_P', park: 'Park_Snowy_P', eurostadium: 'EuroStadium_SnowNight_P', utopiastadium: 'UtopiaStadium_Snow_P' };
 const SNOW_EFFECTS = 'FNI_Stadium_VFX';
 
+// Arenas that are not a normal soccar pitch: Rocket Labs, Hoops, Dropshot, Snow Day,
+// Knockout, Quads, and soccar arenas with an unusual shape. They are never used for,
+// or replaced by, "same arena every match".
+const NOT_STANDARD = /^(labs_|hoops|shattershot|throwbackhockey|ko_|street_p$|wasteland_p$|wasteland_night_p$|neotokyo_p$|arc_p$)/i;
+
 /**
  * Reads every arena and the part files it loads.
  * cache: { "<file>": { size, parts: [...] } }, updated in place (reading a map header is slow).
+ * names: arena file (lower case) -> name the game shows, from the game's own text (labels.js).
  */
-function scanArenas(cookedDir, cache = {}, extraKeys = []) {
+function scanArenas(cookedDir, cache = {}, extraKeys = [], names = new Map()) {
   const files = fs.readdirSync(cookedDir).filter((f) => /\.upk$/i.test(f) && !/_SF\.upk$/i.test(f));
   const byLower = new Map(files.map((f) => [f.replace(/\.upk$/i, '').toLowerCase(), f]));
   const isMap = (f) => /_P\.upk$/i.test(f) && !/^BG_|_Art_|_VFX_P|_OOB_P|MapImage/i.test(f);
@@ -76,10 +82,36 @@ function scanArenas(cookedDir, cache = {}, extraKeys = []) {
     let snow = null;
     if (snowyFile && snowyFile !== file) snow = { how: 'version', gameFile: file, sourceGameFile: snowyFile };
     else if (effects && snowFx && effects.file !== snowFx) snow = { how: 'effects', gameFile: effects.file, sourceGameFile: snowFx };
-    arenas.push({ id: base.toLowerCase(), file, name: arenaName(base), field: (parts.find((p) => p.kind === 'field') || {}).file || null, parts, snow });
+    const id = base.toLowerCase();
+    arenas.push({
+      id, file, size, name: names.get(id) || arenaName(base),
+      playable: names.has(id), // the game lists it as an arena you can play
+      standard: names.has(id) && !NOT_STANDARD.test(id),
+      field: (parts.find((p) => p.kind === 'field') || {}).file || null, parts, snow,
+    });
   }
-  arenas.sort((a, b) => a.name.localeCompare(b.name));
+  // names the game gives several files are told apart by their file name
+  const seen = new Map();
+  for (const a of arenas) seen.set(a.name, (seen.get(a.name) || 0) + 1);
+  for (const a of arenas) if (seen.get(a.name) > 1) a.name += ` · ${a.file.replace(/_P\.upk$/i, '').replace(/_/g, ' ')}`;
+  arenas.sort((a, b) => (b.playable - a.playable) || a.name.localeCompare(b.name));
   return arenas;
+}
+
+// Which arenas show a changed game file: the arena itself, or every arena that loads that part.
+function arenasUsing(arenas, gameFile) {
+  const lower = gameFile.toLowerCase();
+  return arenas.filter((a) => a.file.toLowerCase() === lower || a.parts.some((p) => p.file.toLowerCase() === lower));
+}
+
+// "Same arena every match": every standard arena file becomes a copy of `chosen`.
+// Whatever arena the game picks, it loads the chosen one. The pitch is the same size
+// in all standard arenas, so the ball and walls still line up.
+function everyMatchOps(chosen, arenas) {
+  if (!chosen.standard) throw new Error('Pick a standard soccar arena');
+  return arenas.filter((a) => a.standard && a.id !== chosen.id).map((a) => ({
+    kind: 'copy', gameFile: a.file, sourceGameFile: chosen.file, category: 'map', group: 'everymatch', label: `${chosen.name} in place of ${a.name}`,
+  }));
 }
 
 // The stadium of `donor` placed in the surroundings of `base`: base's field file becomes a copy of donor's.
@@ -93,4 +125,4 @@ function snowOp(arena) {
   return { kind: 'copy', gameFile: arena.snow.gameFile, sourceGameFile: arena.snow.sourceGameFile, category: 'map', label: `Snow on ${arena.name}` };
 }
 
-module.exports = { scanArenas, arenaName, partKind, mergeOp, snowOp };
+module.exports = { scanArenas, arenaName, partKind, mergeOp, snowOp, arenasUsing, everyMatchOps };

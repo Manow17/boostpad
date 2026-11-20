@@ -25,10 +25,10 @@ No account, no subscription, no server. Everything runs on your PC, and every ga
 | --- | --- |
 | **Garage** | Give an item you own the look of another item (cars, wheels, boosts, decals, toppers, antennas, engine sounds, trails, goal explosions, paint finishes, banners, borders, anthems). Items are shown with their real names and pictures, read from your own game files, and each section lists only its own items. A search stays in the section you are in and tells you which other sections also have a match. Once you pick your item, only the looks that work with it are listed. Everything applied or queued is listed there with a Revert button. |
 | **Workshop Maps** | Load a training/challenge map into the Underpass slot and play it from Free Play. |
-| **Map Merge** | Mix the game's own arenas: put the stadium of one arena into the surroundings of another, and add snow where the game has something to do it with. Experimental. |
+| **Map Merge** | Mix the game's own arenas: put the stadium of one arena into the surroundings of another, add snow where the game has something to do it with, or see the same arena in every match. Arenas are listed under the names the game uses, and each change says which arena to play to see it. Experimental. |
 | **Presets** | Save everything that is active and switch setups in one click. Unlimited. Copy a preset as a code to pass it on. |
 | **Swap queue** | Changes made while the game is running wait and go in when it closes. |
-| **Overlay** | Click-through windows over the game, shown only while Rocket League is the window in front. A now-playing pill for your music, and a PlayStation-style controller that lights up with your inputs. Each has its own position (drag it, or pick a corner), size and look. |
+| **Overlay** | Click-through windows over the game, shown only while Rocket League is the window in front. A now-playing pill for your music, and a top-down PS5, PS4 or Xbox controller (picked automatically from the one plugged in) that lights up with your inputs. Each has its own position (drag it, or pick a corner), size and look. |
 | **Profile** | A profile card with any name, title, colour, glow, rank badge and picture. It lives in the app. |
 | **Themes** | Dark or light. Both use the icon's turquoise; the light theme adds charcoal blocks. |
 
@@ -41,6 +41,8 @@ The now-playing pill reads Windows' own media controls, so there is no login and
 Newer arenas are built from separate files that the map loads by name: a `_Field` file with the stadium (pitch, walls, goals, stands), `_OOB` files with the surroundings, and effects files. Merging replaces one arena's `_Field` file with another's. On the test machine 18 arenas are built this way; the rest (DFH Stadium, Mannfield, Beckwith Park and other older ones) are a single file and cannot be taken apart.
 
 Snow works two ways. Four arena families have a snowy version in the game (DFH Stadium, Mannfield, Beckwith Park, Utopia Coliseum), which is swapped in whole. Arenas with a separate effects file can take the falling-snow effects from Forbidden Temple (Fire & Ice) in place of their own. Other arenas have nowhere to put snow.
+
+**Same arena every match** makes every standard soccar arena file a copy of the one you pick, so whatever arena a match is played in, you see that one. Rocket Labs, Hoops, Dropshot, Snow Day, Knockout and odd-shaped arenas are left alone. The originals are backed up first, which takes about 1.3 GB until you turn it off.
 
 None of this has been confirmed in game yet.
 
@@ -55,6 +57,8 @@ None of this has been confirmed in game yet.
 | Workshop maps | File replacement is tested; whether a given map loads depends on the file |
 | Overlays, profile | Working. The now-playing reader is tested against a real Windows media session (title, artist, cover, pause) and the controller drawing against a real pad; the overlays have not been checked over the running game |
 | Map Merge | **Experimental.** The arena scan and the file replacement are tested; the result in game is not |
+
+Fixed in 0.1.1: when the item you own and the new look were encrypted with different keys, 0.1.0 wrote the swapped file with the wrong one and the game crashed when it loaded the item. Swaps and arena changes are now written with the key of the file they replace, and anything 0.1.0 wrote wrongly is rebuilt automatically the next time Boostpad runs with the game closed.
 
 Known limits of item swaps in this version:
 
@@ -103,7 +107,8 @@ src/main/core/   game.js (find game)  upk.js (package reader/patcher)  engine.js
                  library.js (workshop maps)  store.js (settings)
 src/main/        main.js (window, IPC)  preload.js  media.js + media.ps1 (now playing, via Windows)
 src/renderer/    app.js, styles.css, pad.js (controller drawing), overlay + nowplaying (overlay windows)
-assets/          app icon (icon-source.webp, turned into icon.png with `npm run icon`) and fonts
+assets/          app icon (icon-source.webp, turned into icon.png with `npm run icon`), fonts, and
+                 controllers/ (MIT drawings, credits in CREDITS.md; rebuilt with `node scripts/prepare-controllers.js`)
 test/            core tests
 ```
 
@@ -113,4 +118,4 @@ Reports of what does and does not load in game are the most useful thing right n
 
 ## License
 
-MIT. The bundled fonts, Outfit and DM Sans, are under the SIL Open Font License (see `assets/fonts`). Rocket League is a trademark of Psyonix LLC. This repository contains no game files; the screenshots show item pictures as the app displays them from your own install.
+MIT. The bundled fonts, Outfit and DM Sans, are under the SIL Open Font License (see `assets/fonts`). The controller drawings are MIT-licensed work by the Dracula Theme team and Igor Budzhak (see `assets/controllers/CREDITS.md`). Rocket League is a trademark of Psyonix LLC. This repository contains no game files; the screenshots show item pictures as the app displays them from your own install.

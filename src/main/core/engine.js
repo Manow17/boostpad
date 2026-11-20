@@ -41,7 +41,7 @@ class Engine {
   internalName(fileName) {
     const wanted = upk.baseName(fileName);
     try {
-      const pkg = upk.readPackageFile(path.join(this.cooked(), fileName), this.getKeys());
+      const pkg = upk.readHeaderFile(this.pristine(fileName), this.getKeys());
       const hit = pkg.names.find((n) => n.text.toLowerCase() === wanted.toLowerCase());
       if (hit) return hit.text;
     } catch { /* fall back to the file name's casing */ }
@@ -54,33 +54,45 @@ class Engine {
     catch (e) { return { ok: false, code: e.code || 'ERROR', message: e.message }; }
   }
 
+  // The unmodified version of a game file: the backup if Boostpad has changed it.
+  pristine(fileName) {
+    const key = fileName.toLowerCase();
+    return this.store.get('active')[key] ? path.join(this.backupDir, key) : path.join(this.cooked(), fileName);
+  }
+
+  // The key the game uses for a file: the one its original copy is encrypted with.
+  destinationKey(fileName) {
+    try { return upk.keyOfFile(this.pristine(fileName), this.getKeys()); }
+    catch (e) {
+      if (e.code === 'NO_KEY') throw new EngineError('NO_KEY', `Boostpad cannot read ${fileName}, so it cannot write over it. Adding a key list in Settings may help.`);
+      return null; // not an encrypted package: written as it is
+    }
+  }
+
   buildContent(op) {
     if (op.kind === 'file') return fs.readFileSync(op.from);
     if (op.kind === 'copy') {
       if (!op.sourceGameFile || path.basename(op.sourceGameFile) !== op.sourceGameFile) throw new EngineError('BAD_OP', 'Invalid source file name');
       if (op.sourceGameFile.toLowerCase() === op.gameFile.toLowerCase()) throw new EngineError('SAME_ITEM', 'Pick two different files');
-      const key = op.sourceGameFile.toLowerCase();
       // if Boostpad has changed the source itself, copy its original
-      const from = this.store.get('active')[key] ? path.join(this.backupDir, key) : path.join(this.cooked(), op.sourceGameFile);
+      const from = this.pristine(op.sourceGameFile);
       if (!fs.existsSync(from)) throw new EngineError('NO_SUCH_GAME_FILE', `${op.sourceGameFile} is not in the game folder`);
-      return fs.readFileSync(from);
+      const key = this.destinationKey(op.gameFile);
+      const buf = fs.readFileSync(from);
+      return key ? upk.reencrypt(buf, key, this.getKeys()) : buf;
     }
     if (op.kind !== 'swap') throw new EngineError('BAD_OP', `Unknown operation "${op.kind}"`);
     if (op.sourceFile.toLowerCase() === op.targetFile.toLowerCase()) {
       throw new EngineError('SAME_ITEM', 'Pick two different items');
     }
-    const cooked = this.cooked();
     // Always read the target from its pristine copy if we have modified it.
-    const targetKey = op.targetFile.toLowerCase();
-    const targetPath = this.store.get('active')[targetKey]
-      ? path.join(this.backupDir, targetKey)
-      : path.join(cooked, op.targetFile);
+    const targetPath = this.pristine(op.targetFile);
     const from = upk.baseName(op.targetFile);
     const to = this.internalName(op.sourceFile);
     const res = upk.renameNames(fs.readFileSync(targetPath), [
       { from, to },
       { from: `${from}_SF`, to: `${to}_SF` },
-    ], this.getKeys());
+    ], this.getKeys(), this.destinationKey(op.sourceFile));
     if (res.missing.includes(from)) {
       throw new EngineError('UNEXPECTED_LAYOUT', `"${from}" was not found inside ${op.targetFile}`);
     }
@@ -194,6 +206,25 @@ class Engine {
 
   reconcile() {
     return Object.keys(this.store.get('active')).filter((key) => this.dropIfOverwritten(key));
+  }
+
+  // Versions before 0.1.1 wrote swaps and arena copies with the wrong key when the
+  // two files used different ones, which crashes the game. Rebuild any such file.
+  // Returns the labels of what was rebuilt. Call only while the game is closed.
+  repairKeys() {
+    const fixed = [];
+    for (const rec of Object.values(this.store.get('active'))) {
+      if (rec.op.kind !== 'swap' && rec.op.kind !== 'copy') continue;
+      try {
+        const want = this.destinationKey(rec.file);
+        if (!want) continue;
+        const have = (() => { try { return upk.keyOfFile(path.join(this.cooked(), rec.file), this.getKeys()); } catch { return null; } })();
+        if (have && have.equals(want)) continue;
+        this.applyNow(rec.op);
+        fixed.push(rec.op.label || rec.file);
+      } catch { /* leave it; the user can revert it */ }
+    }
+    return fixed;
   }
 }
 

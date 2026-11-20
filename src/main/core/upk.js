@@ -146,7 +146,11 @@ function readPackageFile(file, extraKeys) {
  * Returns { buffer, renamed, missing }. Throws NAME_TOO_LONG when `to` does not
  * fit in the bytes of the entry it replaces.
  */
-function renameNames(buf, renames, extraKeys = []) {
+// The game reads each package file with the key that belongs to that file. So a
+// package written over another one must be encrypted with the replaced file's key
+// (`outputKey`), not with the key it came with — otherwise the game cannot read it
+// and crashes when it loads the item.
+function renameNames(buf, renames, extraKeys = [], outputKey = null) {
   const pkg = readPackage(buf, extraKeys);
   const plain = Buffer.from(pkg.plain);
   const renamed = [], missing = [];
@@ -164,8 +168,17 @@ function renameNames(buf, renames, extraKeys = []) {
     }
   }
   const out = Buffer.from(buf);
-  aes('enc', pkg.key, plain).copy(out, pkg.range.start);
+  aes('enc', outputKey || pkg.key, plain).copy(out, pkg.range.start);
   return { buffer: out, renamed, missing };
+}
+
+// The same package, its header encrypted with `key` instead of its own.
+function reencrypt(buf, key, extraKeys = []) {
+  const pkg = readPackage(buf, extraKeys);
+  if (pkg.key.equals(key)) return buf;
+  const out = Buffer.from(buf);
+  aes('enc', key, pkg.plain).copy(out, pkg.range.start);
+  return out;
 }
 
 // Cheap check: can this package be read with the keys we have? Reads only the
@@ -184,7 +197,7 @@ function probeFile(file, extraKeys = []) {
 
 // The name table of a package, read without loading the whole file (maps are 10-50 MB,
 // their header a small part of that).
-function readNamesFile(file, extraKeys = []) {
+function readHeaderFile(file, extraKeys = []) {
   const fd = fs.openSync(file, 'r');
   try {
     const head = Buffer.alloc(16384);
@@ -194,8 +207,15 @@ function readNamesFile(file, extraKeys = []) {
     const buf = Buffer.alloc(end);
     fs.readSync(fd, buf, 0, end, 0);
     // headerRange() only needs the file to be at least as long as the encrypted block
-    return readPackage(buf, extraKeys).names.map((n) => n.text);
+    return readPackage(buf, extraKeys);
   } finally { fs.closeSync(fd); }
+}
+function readNamesFile(file, extraKeys = []) {
+  return readHeaderFile(file, extraKeys).names.map((n) => n.text);
+}
+// The key a package file is encrypted with (a Buffer), read from its header only.
+function keyOfFile(file, extraKeys = []) {
+  return readHeaderFile(file, extraKeys).key;
 }
 
 // ----- read-only access to objects (used for thumbnails) -----
@@ -276,5 +296,5 @@ function baseName(fileName) {
 
 module.exports = {
   UpkError, DEFAULT_KEYS, parseSummary, readPackage, readPackageFile, renameNames, baseName,
-  probeFile, parseKeys, readNamesFile, readTables, inflateChunk, readObject,
+  probeFile, parseKeys, readHeaderFile, readNamesFile, keyOfFile, reencrypt, readTables, inflateChunk, readObject,
 };

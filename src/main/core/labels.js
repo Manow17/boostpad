@@ -52,16 +52,31 @@ function* entries(plain) {
  * Empty when the file is missing or none of the keys opens it (it needs a key from a key list).
  */
 function readLabels(cookedDir, extraKeys = []) {
-  const labels = new Map();
+  return readTexts(cookedDir, extraKeys).labels;
+}
+
+/**
+ * Everything Boostpad takes from the game's text in one pass:
+ *   labels  package name -> item name ("skin_indigod" -> "Lunation")
+ *   maps    arena file   -> arena name as the game shows it ("cs_day_p" -> "Champions Field (Day)")
+ * Keys are lower-cased. Both are empty when the file cannot be read.
+ */
+function readTexts(cookedDir, extraKeys = []) {
+  const labels = new Map(), base = new Map(), variant = new Map();
   try {
     const buf = fs.readFileSync(path.join(cookedDir, FILE));
     const key = findKey(buf, [...upk.DEFAULT_KEYS, ...extraKeys]);
-    if (!key) return labels;
-    for (const { section, key: k, value } of entries(decrypt(buf, key))) {
-      if (k === 'Label' && value && !labels.has(section.toLowerCase())) labels.set(section.toLowerCase(), value);
+    if (key) {
+      for (const { section, key: k, value } of entries(decrypt(buf, key))) {
+        if (!value) continue;
+        if (k === 'Label' && !labels.has(section.toLowerCase())) labels.set(section.toLowerCase(), value);
+        else if (section === 'MapBase') base.set(k.toLowerCase(), value);
+        else if (section === 'MapVariants') variant.set(k.toLowerCase(), value);
+      }
     }
   } catch { /* unreadable: items keep their internal names */ }
-  return labels;
+  const maps = new Map([...base].map(([file, name]) => [file, variant.has(file) ? `${name} (${variant.get(file)})` : name]));
+  return { labels, maps };
 }
 
 // Gives each catalog item its shop name (`label`) and, for a decal made for one
@@ -82,4 +97,4 @@ function applyLabels(items, labels) {
   return named;
 }
 
-module.exports = { readLabels, applyLabels };
+module.exports = { readLabels, readTexts, applyLabels };

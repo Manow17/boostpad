@@ -10,7 +10,7 @@ const mediaBridge = require('./media');
 const upk = require('./core/upk');
 const { Maps, MAP_SLOT } = require('./core/library');
 const arenas = require('./core/arenas');
-const { readLabels, applyLabels } = require('./core/labels');
+const { readLabels, readTexts, applyLabels } = require('./core/labels');
 
 const DEFAULTS = {
   platform: null,
@@ -20,7 +20,7 @@ const DEFAULTS = {
   profile: { name: '', title: '', titleColor: '#00d8c8', glow: false, rank: '', avatar: '' },
   overlay: {
     onlyInGame: true, // show overlays only while Rocket League is the window in front
-    pad: { on: false, x: null, y: null, size: 100, opacity: 100, body: '#f2f3f5', keys: '#1b1c21', glow: '#00d8c8' },
+    pad: { on: false, model: 'auto', x: null, y: null, size: 100, opacity: 100, body: '#14161b', keys: '#23262d', glow: '#00d8c8' },
     music: { on: false, x: null, y: null, size: 100, source: 'auto' },
   },
 };
@@ -134,7 +134,7 @@ async function pick(options) {
 // Rocket League is the window in front (unless that option is off, or the user is
 // previewing or moving them).
 const OVERLAYS = {
-  pad: { page: 'overlay.html', width: 420, height: 300 },
+  pad: { page: 'overlay.html', width: 420, height: 360 },
   music: { page: 'nowplaying.html', width: 400, height: 70 },
 };
 const ANCHORS = ['tl', 'tc', 'tr', 'bl', 'bc', 'br'];
@@ -274,11 +274,26 @@ const api = {
     if (!arenaList) {
       const cache = new Store(path.join(app.getPath('userData'), 'arenas.json'), { dir: '', keys: 0, files: {} });
       const files = cache.get('dir') === cooked() && cache.get('keys') === extraKeys.length ? cache.get('files') : {};
-      arenaList = arenas.scanArenas(cooked(), files, extraKeys);
+      arenaList = arenas.scanArenas(cooked(), files, extraKeys, readTexts(cooked(), extraKeys).maps);
       cache.data = { dir: cooked(), keys: extraKeys.length, files };
       cache.save();
     }
     return arenaList;
+  },
+  // Same arena every match: one copy per standard arena, applied (or queued) one by one.
+  async everyMatch(id) {
+    const list = api.arenas(), chosen = list.find((a) => a.id === id);
+    if (!chosen) throw new Error('Arena not found');
+    // a different arena chosen before: those copies go back first, so no file keeps the old one
+    for (const rec of engine.list().active) if (rec.op.group === 'everymatch' && rec.op.sourceGameFile !== chosen.file) await engine.revert(rec.key);
+    let queued = false;
+    for (const op of arenas.everyMatchOps(chosen, list)) queued = (await engine.apply(op)).queued || queued;
+    return { queued, state: snapshot() };
+  },
+  async everyMatchOff() {
+    for (const q of engine.list().queue) if (q.op && q.op.group === 'everymatch') engine.unqueue(q.key);
+    for (const rec of engine.list().active) if (rec.op.group === 'everymatch') await engine.revert(rec.key);
+    return snapshot();
   },
   mergeArenas(donorId, baseId) {
     const list = api.arenas(), find = (id) => list.find((a) => a.id === id);
@@ -385,9 +400,14 @@ async function poll() {
   if (now === running) return;
   running = now;
   syncOverlays();
-  let flushed = [];
-  if (!running) flushed = await engine.flushQueue();
-  send('state', { state: snapshot(), flushed });
+  let flushed = [], notice = '';
+  if (!running) {
+    flushed = await engine.flushQueue();
+    // anything an older version wrote with the wrong key is rebuilt as soon as the game closes
+    const repaired = engine.repairKeys();
+    if (repaired.length) notice = `Rebuilt ${repaired.length === 1 ? 'a change' : `${repaired.length} changes`} that an earlier version wrote incorrectly: ${repaired.join(', ')}.`;
+  }
+  send('state', { state: snapshot(), flushed, notice });
 }
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'thumb', privileges: { standard: true, secure: true } }]);
@@ -409,9 +429,15 @@ app.whenReady().then(async () => {
   const saved = settings.get('overlay');
   if (!saved.pad || !saved.music) {
     settings.set('overlay', { ...DEFAULTS.overlay, pad: { ...DEFAULTS.overlay.pad, on: !!saved.controller }, music: { ...DEFAULTS.overlay.music, on: !!saved.nowPlaying } });
+  } else if (saved.pad.body === '#f2f3f5' && saved.pad.keys === '#1b1c21') {
+    // the old drawn controller's default colours: use the new default (midnight black)
+    settings.set('overlay', { ...saved, pad: { ...saved.pad, body: DEFAULTS.overlay.pad.body, keys: DEFAULTS.overlay.pad.keys, model: saved.pad.model || 'auto' } });
   }
-  if (cooked() && game.isValidInstall(settings.get('installDir'))) engine.reconcile();
+  const installed = cooked() && game.isValidInstall(settings.get('installDir'));
+  if (installed) engine.reconcile();
   running = await game.isRunning();
+  // swaps written by an older version with the wrong key crash the game: rebuild them
+  const repaired = installed && !running && !smokeShot ? engine.repairKeys() : [];
 
   protocol.handle('thumb', (request) => {
     let jpg = null;
@@ -440,6 +466,9 @@ app.whenReady().then(async () => {
   // test hook, smoke mode only: --smoke-page=nowplaying screenshots an overlay page instead of the app
   const page = smokeShot && arg('smoke-page') ? `${path.basename(arg('smoke-page'))}.html` : 'index.html';
   await win.loadFile(path.join(__dirname, '../renderer', page), { hash: arg('tab') || '' });
+  if (repaired.length) {
+    setTimeout(() => send('state', { state: snapshot(), flushed: [], notice: `Rebuilt ${repaired.length === 1 ? 'a change' : `${repaired.length} changes`} that an earlier version wrote incorrectly: ${repaired.join(', ')}.` }), 1500);
+  }
 
   if (smokeShot) {
     const errors = [];
