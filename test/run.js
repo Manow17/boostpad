@@ -13,7 +13,8 @@ const { buildCatalog, annotate, canSwap, prettify } = require('../src/main/core/
 const { readThumbnail, decodeDxt } = require('../src/main/core/thumbs');
 const { Engine } = require('../src/main/core/engine');
 const { Store } = require('../src/main/core/store');
-const { Maps, Packs, MAP_SLOT } = require('../src/main/core/library');
+const { Maps, MAP_SLOT } = require('../src/main/core/library');
+const arenas = require('../src/main/core/arenas');
 
 const sha = (f) => crypto.createHash('sha1').update(fs.readFileSync(f)).digest('hex');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'boostpad-test-'));
@@ -176,21 +177,38 @@ function makeEngine(cooked, running = { value: false }) {
     assert.strictEqual(sha(slot), original);
   }, !real);
 
-  test('mod packs: valid pack loads, path escapes are rejected', () => {
-    const packs = new Packs(path.join(tmp, 'packs'));
-    const src = path.join(tmp, 'Cool Ball');
-    fs.mkdirSync(src);
-    fs.writeFileSync(path.join(src, 'ball.upk'), 'x');
-    fs.writeFileSync(path.join(src, 'pack.json'), JSON.stringify({ name: 'Cool Ball', type: 'ball', files: { 'Ball_Default_SF.upk': 'ball.upk' } }));
-    const pack = packs.import(src);
-    assert.strictEqual(pack.type, 'ball');
-    assert.strictEqual(packs.ops(pack.id)[0].gameFile, 'Ball_Default_SF.upk');
-    for (const files of [{ '..\\..\\evil.upk': 'ball.upk' }, { 'Ball_Default_SF.upk': '..\\s.json' }]) {
-      fs.writeFileSync(path.join(src, 'pack.json'), JSON.stringify({ name: 'bad', files }));
-      assert.throws(() => packs.import(src), /invalid entry/);
-      assert.deepStrictEqual(packs.list(), [], 'a rejected pack must not stay in the library');
-    }
+  test('arena names and part kinds', () => {
+    assert.strictEqual(arenas.arenaName('CS_Day_P'), 'Champions Field (Day)');
+    assert.strictEqual(arenas.arenaName('Stadium_P'), 'DFH Stadium');
+    assert.strictEqual(arenas.arenaName('FNI_Stadium_P'), 'Forbidden Temple (Fire & Ice)');
+    assert.strictEqual(arenas.arenaName('Labs_Basin_P'), 'Labs Basin');
+    assert.deepStrictEqual(['CS_Field', 'CS_OOB2', 'CHN_Stadium_VFX', 'CS_Lights', 'Park_SFX'].map(arenas.partKind), ['field', 'surroundings', 'effects', 'lights', 'audio']);
   });
+
+  test('arenas are scanned from the install with their parts', () => {
+    const cache = {};
+    const list = arenas.scanArenas(real, cache);
+    const cs = list.find((a) => a.id === 'cs_p'), beach = list.find((a) => a.id === 'beach_p'), park = list.find((a) => a.id === 'park_p');
+    assert.ok(list.length > 50 && cs && beach && park);
+    assert.strictEqual(cs.field.toLowerCase(), 'cs_field.upk');
+    assert.strictEqual(park.field, null, 'Beckwith Park is a single file');
+    assert.strictEqual(park.snow.how, 'version');
+    assert.deepStrictEqual(arenas.mergeOp(beach, cs), { kind: 'copy', gameFile: cs.field, sourceGameFile: beach.field, category: 'map', label: 'Salty Shores stadium in Champions Field' });
+    assert.throws(() => arenas.mergeOp(park, cs), /separate stadium part/);
+    const again = arenas.scanArenas(real, cache); // second pass comes from the cache
+    assert.strictEqual(again.length, list.length);
+    console.log(`        ${list.length} arenas, ${list.filter((a) => a.field).length} with a stadium part, ${list.filter((a) => a.snow).length} with a snow option`);
+  }, !real);
+
+  test('copy: one game file becomes a copy of another, and reverts', async () => {
+    const { engine } = makeEngine(cooked);
+    const dest = path.join(cooked, midF), original = sha(dest);
+    await engine.apply({ kind: 'copy', gameFile: midF, sourceGameFile: longF });
+    assert.strictEqual(sha(dest), sha(path.join(cooked, longF)));
+    assert.strictEqual(engine.checkSwap({ kind: 'copy', gameFile: midF, sourceGameFile: '..\\x.upk' }).ok, false);
+    await engine.revert(midF.toLowerCase());
+    assert.strictEqual(sha(dest), original);
+  }, !real);
 
   test('probe agrees with a full read, and compatible looks are marked', () => {
     const cat = buildCatalog(real);

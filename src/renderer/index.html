@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: thumb:; media-src 'self' file:; connect-src http: https:; style-src 'self' 'unsafe-inline'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: thumb:; media-src 'self' file:; connect-src 'none'; style-src 'self' 'unsafe-inline'">
   <title>Boostpad</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -13,6 +13,7 @@
     <section id="view"></section>
   </main>
   <div id="toasts"></div>
+  <script src="pad.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

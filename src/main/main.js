@@ -8,17 +8,20 @@ const { buildCatalog, annotate } = require('./core/catalog');
 const { readThumbnail } = require('./core/thumbs');
 const mediaBridge = require('./media');
 const upk = require('./core/upk');
-const { Maps, Packs, MAP_SLOT } = require('./core/library');
+const { Maps, MAP_SLOT } = require('./core/library');
+const arenas = require('./core/arenas');
 
 const DEFAULTS = {
   platform: null,
   installDir: null,
-  experimentalSwaps: false,
   theme: { mode: 'dark' },
   presets: [],
   profile: { name: '', title: '', titleColor: '#00d8c8', glow: false, rank: '', avatar: '' },
-  overlay: { controller: false, nowPlaying: false, style: 'light', size: 100, x: null, y: null },
-  syncUrl: '',
+  overlay: {
+    onlyInGame: true, // show overlays only while Rocket League is the window in front
+    pad: { on: false, x: null, y: null, size: 100, opacity: 100, body: '#f2f3f5', keys: '#1b1c21', glow: '#00d8c8' },
+    music: { on: false, x: null, y: null, size: 100, source: 'auto' },
+  },
 };
 
 const arg = (name) => {
@@ -28,7 +31,7 @@ const arg = (name) => {
 const smokeShot = arg('smoke'); // --smoke=<png path>: render once, save a screenshot, quit
 if (arg('data')) app.setPath('userData', path.resolve(arg('data')));
 
-let win = null, overlay = null, settings, engine, maps, packs, catalog = null, running = false;
+let win = null, settings, engine, maps, catalog = null, arenaList = null, running = false;
 
 const ACCENT = '#00d8c8';
 const ICON = path.join(__dirname, '..', '..', 'assets', 'icon.png');
@@ -112,6 +115,7 @@ function snapshot() {
     engine: engine.list(),
     mapSlot: MAP_SLOT,
     keys: extraKeys.length,
+    overlayMove: overlayEdit,
   };
 }
 
@@ -120,60 +124,91 @@ async function pick(options) {
   return res.canceled ? [] : res.filePaths;
 }
 
-function setOverlay() {
-  const cfg = settings.get('overlay');
-  const wanted = !!cfg.controller;
-  if (!wanted) { if (overlay) overlay.destroy(); overlay = null; return; }
-  if (!overlay) {
-    const area = screen.getPrimaryDisplay().workArea;
-    overlay = new BrowserWindow({
-      width: 420, height: 300, x: cfg.x ?? area.x + area.width - 440, y: cfg.y ?? area.y + 20,
-      frame: false, transparent: true, resizable: false, skipTaskbar: true, focusable: false, show: false, icon: ICON,
-      webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false },
-    });
-    overlay.setAlwaysOnTop(true, 'screen-saver');
-    overlay.setIgnoreMouseEvents(true);
-    overlay.loadFile(path.join(__dirname, '../renderer/overlay.html'));
-    overlay.once('ready-to-show', () => overlay.showInactive());
-    overlay.on('closed', () => { overlay = null; });
-  } else {
-    overlay.webContents.send('overlay-config', overlayPayload());
+// ---- overlays: click-through windows drawn over the game ----
+// Two of them: the controller ("pad") and the now-playing pill ("music"). Each has
+// its own position, size and look in settings.overlay, and is shown only while
+// Rocket League is the window in front (unless that option is off, or the user is
+// previewing or moving them).
+const OVERLAYS = {
+  pad: { page: 'overlay.html', width: 420, height: 300 },
+  music: { page: 'nowplaying.html', width: 400, height: 70 },
+};
+const ANCHORS = ['tl', 'tc', 'tr', 'bl', 'bc', 'br'];
+const DEFAULT_ANCHOR = { pad: 'br', music: 'tc' };
+const overlayWins = {};
+let overlayEdit = false, previewUntil = 0, previewTimer = null;
+let foreground = ''; // process name of the window in front, '' when unknown
+
+const inGame = () => (foreground ? /^RocketLeague/i.test(foreground) : running);
+const overlaySize = (kind) => {
+  const scale = settings.get('overlay')[kind].size / 100;
+  return { width: Math.round(OVERLAYS[kind].width * scale), height: Math.round(OVERLAYS[kind].height * scale) };
+};
+function anchorPosition(kind, anchor) {
+  const area = screen.getPrimaryDisplay().bounds, { width, height } = overlaySize(kind), gap = 16;
+  const x = anchor[1] === 'l' ? area.x + gap : anchor[1] === 'r' ? area.x + area.width - width - gap : area.x + Math.round((area.width - width) / 2);
+  const y = anchor[0] === 't' ? area.y + gap : area.y + area.height - height - gap;
+  return { x, y };
+}
+function overlayPayload(kind) {
+  return { ...settings.get('overlay')[kind], edit: overlayEdit };
+}
+function overlayShown(kind) {
+  const o = settings.get('overlay');
+  return o[kind].on && (overlayEdit || Date.now() < previewUntil || !o.onlyInGame || inGame());
+}
+function syncOverlays() {
+  const o = settings.get('overlay');
+  for (const kind of Object.keys(OVERLAYS)) {
+    const cfg = o[kind];
+    let w = overlayWins[kind];
+    if (!cfg.on) { if (w && !w.isDestroyed()) w.destroy(); delete overlayWins[kind]; continue; }
+    const size = overlaySize(kind);
+    const at = cfg.x == null || cfg.y == null ? anchorPosition(kind, DEFAULT_ANCHOR[kind]) : { x: cfg.x, y: cfg.y };
+    if (!w || w.isDestroyed()) {
+      w = overlayWins[kind] = new BrowserWindow({
+        ...size, ...at, frame: false, transparent: true, resizable: false, skipTaskbar: true, focusable: false, show: false, hasShadow: false, icon: ICON,
+        webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false },
+      });
+      w.setAlwaysOnTop(true, 'screen-saver');
+      w.loadFile(path.join(__dirname, '../renderer', OVERLAYS[kind].page));
+      // dragged to a new place while "Move overlays" is on: remember it
+      w.on('moved', () => {
+        if (!overlayEdit || w.isDestroyed()) return;
+        const [x, y] = w.getPosition();
+        const next = settings.get('overlay');
+        next[kind] = { ...next[kind], x, y };
+        settings.set('overlay', next);
+        send('state', { state: snapshot(), flushed: [] });
+      });
+    }
+    const b = w.getBounds();
+    if (b.width !== size.width || b.height !== size.height || b.x !== at.x || b.y !== at.y) w.setBounds({ ...at, ...size });
+    w.setIgnoreMouseEvents(!overlayEdit);
+    w.setFocusable(overlayEdit);
+    w.webContents.send('overlay-config', overlayPayload(kind));
+    if (overlayShown(kind)) { if (!w.isVisible()) w.showInactive(); } else if (w.isVisible()) w.hide();
   }
 }
 
-function overlayPayload() {
-  return { ...settings.get('overlay'), accent: ACCENT };
-}
-
-// What is playing (Spotify, through Windows' media controls) and the pill that
-// shows it at the top of the screen.
+// What is playing, read from Windows' media controls (any app that shows up there).
 // (test hook: --fake-media gives test runs a made-up track, so the pages can be screenshotted)
 let mediaState = smokeShot && process.argv.includes('--fake-media')
   ? { found: true, app: 'Spotify.exe', source: 'Spotify', title: 'Example Track', artist: 'Example Artist', album: 'Example Album', playing: true, position: 62, duration: 201, updated: Date.now(), art: '' }
   : { found: false };
-let mediaWatcher = null, nowPlaying = null;
+let mediaWatcher = null;
 function startMedia() {
-  mediaWatcher = mediaBridge.watch((state) => {
-    mediaState = state;
-    send('media', state);
-    if (nowPlaying && !nowPlaying.isDestroyed()) nowPlaying.webContents.send('media', state);
+  if (mediaWatcher) mediaWatcher.stop();
+  mediaWatcher = mediaBridge.watch({
+    source: settings.get('overlay').music.source,
+    onState(state) {
+      mediaState = state;
+      send('media', state);
+      const w = overlayWins.music;
+      if (w && !w.isDestroyed()) w.webContents.send('media', state);
+    },
+    onForeground(name) { foreground = name; syncOverlays(); },
   });
-}
-function setNowPlaying() {
-  const wanted = !!settings.get('overlay').nowPlaying;
-  if (!wanted) { if (nowPlaying) nowPlaying.destroy(); nowPlaying = null; return; }
-  if (nowPlaying) return;
-  const area = screen.getPrimaryDisplay().bounds, width = 400, height = 70;
-  nowPlaying = new BrowserWindow({
-    width, height, x: Math.round(area.x + (area.width - width) / 2), y: area.y + 6,
-    frame: false, transparent: true, resizable: false, skipTaskbar: true, focusable: false, show: false, hasShadow: false, icon: ICON,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false },
-  });
-  nowPlaying.setAlwaysOnTop(true, 'screen-saver');
-  nowPlaying.setIgnoreMouseEvents(true);
-  nowPlaying.loadFile(path.join(__dirname, '../renderer/nowplaying.html'));
-  nowPlaying.once('ready-to-show', () => nowPlaying.showInactive());
-  nowPlaying.on('closed', () => { nowPlaying = null; });
 }
 
 // Everything the UI can ask for. Each method returns plain JSON.
@@ -186,6 +221,7 @@ const api = {
     settings.set('platform', platform);
     settings.set('installDir', dir);
     catalog = null;
+    arenaList = null;
     return snapshot();
   },
   async browseInstall(platform) {
@@ -195,7 +231,10 @@ const api = {
   setSetting(key, value) {
     if (!(key in DEFAULTS)) throw new Error(`Unknown setting ${key}`);
     settings.set(key, value);
-    if (key === 'overlay') { setOverlay(); setNowPlaying(); }
+    if (key === 'overlay') {
+      syncOverlays();
+      if (value.music.source !== (mediaWatcher && mediaWatcher.source)) startMedia(); // follow a different app
+    }
     if (key === 'theme') applyChrome();
     return snapshot();
   },
@@ -210,7 +249,6 @@ const api = {
 
   checkSwap: (op) => engine.checkSwap(op),
   async apply(op) {
-    if (op.kind === 'swap' && !settings.get('experimentalSwaps')) throw new Error('Item swaps are experimental. Turn them on in Settings first.');
     const res = await engine.apply(op);
     return { ...res, state: snapshot() };
   },
@@ -227,21 +265,26 @@ const api = {
   mapsRemove(id) { maps.remove(id); return maps.list(); },
   mapsLoad: (id) => api.apply(maps.op(id)),
 
-  packsList: () => packs.list(),
-  async packsImport() {
-    const [dir] = await pick({ title: 'Select a mod pack folder (with pack.json)', properties: ['openDirectory'] });
-    if (dir) packs.import(dir);
-    return packs.list();
+  // Map Merge: arenas and the part files they load
+  arenas() {
+    if (!arenaList) {
+      const cache = new Store(path.join(app.getPath('userData'), 'arenas.json'), { dir: '', keys: 0, files: {} });
+      const files = cache.get('dir') === cooked() && cache.get('keys') === extraKeys.length ? cache.get('files') : {};
+      arenaList = arenas.scanArenas(cooked(), files, extraKeys);
+      cache.data = { dir: cooked(), keys: extraKeys.length, files };
+      cache.save();
+    }
+    return arenaList;
   },
-  packsRemove(id) { packs.remove(id); return packs.list(); },
-  async packsApply(id) {
-    let queued = false;
-    for (const op of packs.ops(id)) queued = (await engine.apply(op)).queued || queued;
-    return { queued, state: snapshot() };
+  mergeArenas(donorId, baseId) {
+    const list = api.arenas(), find = (id) => list.find((a) => a.id === id);
+    if (!find(donorId) || !find(baseId)) throw new Error('Arena not found');
+    return api.apply(arenas.mergeOp(find(donorId), find(baseId)));
   },
-  async packsRevert(id) {
-    for (const rec of engine.list().active) if (rec.op.packId === id) await engine.revert(rec.key);
-    return snapshot();
+  snowArena(id) {
+    const arena = api.arenas().find((a) => a.id === id);
+    if (!arena) throw new Error('Arena not found');
+    return api.apply(arenas.snowOp(arena));
   },
 
   presetSave(name) {
@@ -283,7 +326,8 @@ const api = {
   },
 
   mediaState: () => mediaState,
-  mediaControl(action) { mediaBridge.control(action); },
+  mediaSources: () => mediaBridge.SOURCES.map(({ id, name }) => ({ id, name })),
+  mediaControl(action) { mediaBridge.control(action, settings.get('overlay').music.source); },
   async pickAvatar() {
     const [file] = await pick({ title: 'Choose a picture', properties: ['openFile'], filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] });
     if (!file) return null;
@@ -313,13 +357,30 @@ const api = {
     catalog = null;
     return snapshot();
   },
-  overlayConfig: () => overlayPayload(),
+  overlayConfig: (kind) => overlayPayload(kind),
+  // let the user drag the overlays to where they want them
+  overlayMove(on) { overlayEdit = !!on; syncOverlays(); return snapshot(); },
+  overlayPreview() {
+    previewUntil = Date.now() + 8000;
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(syncOverlays, 8100);
+    syncOverlays();
+  },
+  overlayAnchor(kind, anchor) {
+    if (!OVERLAYS[kind] || !(ANCHORS.includes(anchor) || anchor === 'reset')) throw new Error('Unknown position');
+    const next = settings.get('overlay');
+    next[kind] = { ...next[kind], ...(anchor === 'reset' ? { x: null, y: null } : anchorPosition(kind, anchor)) };
+    settings.set('overlay', next);
+    syncOverlays();
+    return snapshot();
+  },
 };
 
 async function poll() {
   const now = await game.isRunning();
   if (now === running) return;
   running = now;
+  syncOverlays();
   let flushed = [];
   if (!running) flushed = await engine.flushQueue();
   send('state', { state: snapshot(), flushed });
@@ -340,7 +401,11 @@ app.whenReady().then(async () => {
   });
   loadKeys();
   maps = new Maps(path.join(data, 'maps'));
-  packs = new Packs(path.join(data, 'packs'));
+  // settings from an older version: bring the overlay options into the current shape
+  const saved = settings.get('overlay');
+  if (!saved.pad || !saved.music) {
+    settings.set('overlay', { ...DEFAULTS.overlay, pad: { ...DEFAULTS.overlay.pad, on: !!saved.controller }, music: { ...DEFAULTS.overlay.music, on: !!saved.nowPlaying } });
+  }
   if (cooked() && game.isValidInstall(settings.get('installDir'))) engine.reconcile();
   running = await game.isRunning();
 
@@ -365,7 +430,7 @@ app.whenReady().then(async () => {
     // test runs render offscreen, which keeps animations running so the screenshot is truthful
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, offscreen: !!smokeShot },
   });
-  win.on('closed', () => { for (const w of [overlay, nowPlaying]) if (w && !w.isDestroyed()) w.destroy(); });
+  win.on('closed', () => { for (const w of Object.values(overlayWins)) if (w && !w.isDestroyed()) w.destroy(); });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   // test hook, smoke mode only: --smoke-page=nowplaying screenshots an overlay page instead of the app
@@ -384,8 +449,7 @@ app.whenReady().then(async () => {
     }, arg("smoke-wait") ? Number(arg("smoke-wait")) : arg("smoke-eval") ? 5000 : 2500);
     return;
   }
-  setOverlay();
-  setNowPlaying();
+  syncOverlays();
   startMedia();
   setInterval(poll, 4000);
 });

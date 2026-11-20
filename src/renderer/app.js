@@ -8,20 +8,18 @@ const ui = { tab: location.hash.slice(1) || 'garage', cat: 'cars', q: '', slot: 
 
 const PAGES = {
   garage: ['Garage', 'Give an item you own the look of another. Only you see it.'],
-  packs: ['Mod Packs', 'Balls, decals, boost meters, wheels, lobby, loading screens, music and sounds.'],
   maps: ['Workshop Maps', 'Training and challenge maps, on Steam or Epic.'],
+  lab: ['Map Merge', 'Mix the game’s own arenas, and add snow.'],
   presets: ['Presets', 'Save your whole setup and switch in one click.'],
-  overlay: ['Overlay', 'An always-on-top window over the game.'],
-  music: ['Spotify', 'What you are listening to, in the app and over the game.'],
+  overlay: ['Overlay', 'Your music and your controller, over the game.'],
   profile: ['Profile', 'Your Boostpad card.'],
   settings: ['Settings', ''],
 };
 const NAV = [
-  [['garage', 'cars'], ['packs', 'packs'], ['maps', 'maps'], ['presets', 'presets']],
-  [['music', 'anthems'], ['overlay', 'overlay']],
+  [['garage', 'cars'], ['maps', 'maps'], ['lab', 'merge'], ['presets', 'presets']],
+  [['overlay', 'overlay']],
   [['profile', 'profile'], ['settings', 'settings']],
 ];
-const PACK_TYPES = [['all', 'All'], ['ball', 'Ball'], ['decal', 'Decals'], ['boostmeter', 'Boost meter'], ['wheels', 'Wheels'], ['menu', 'Lobby'], ['loading', 'Loading screen'], ['music', 'Menu music'], ['sound', 'Sounds'], ['other', 'Other']];
 const RANKS = ['', 'Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Champion', 'Grand Champion', 'Supersonic Legend'];
 const COLORS = ['#00d8c8', '#38bdf8', '#818cf8', '#c084fc', '#f472b6', '#fb7185', '#fb923c', '#facc15', '#a3e635'];
 
@@ -62,6 +60,7 @@ const IC = {
   moon: 'M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.500 10.500z',
   play: 'M8 5l11 7l-11 7z',
   lock: 'M7 11V8a5 5 0 0 1 10 0v3 M5 11h14v9H5z M12 15v2',
+  merge: 'M6 4v5a7 7 0 0 0 7 7h5 M6 20v-9 M15 12l4 4l-4 4',
 };
 const FILLED = new Set(['play']);
 // which icon stands for a pack type / operation category
@@ -334,10 +333,6 @@ let garage = null;   // handles of the mounted Garage page, so a pick does not r
 
 views.garage = () => {
   const root = bento();
-  if (!S.settings.experimentalSwaps) {
-    root.append(noteTile('warn', 's12', 'Item swaps rewrite game packages and are not confirmed in game yet. Turn them on to use the Swap button.',
-      h('button', { class: 'btn sm', style: 'margin-left:12px', onclick: go('settings') }, 'Open Settings')));
-  }
   if (!catalog) { ensureCatalog(); root.append(tile('s12', empty('cars', 'Reading your game files', 'Building the item list from your own install.'))); return root; }
 
   const pool = () => catalog.items.filter((i) => i.category === ui.cat);
@@ -369,7 +364,7 @@ views.garage = () => {
     bar.replaceChildren(
       pick('src', 'Your item', ui.src, 'Pick an item you own'),
       h('div', { class: 'tile mid ink' },
-        h('button', { class: 'btn primary lg', disabled: !ready || !S.settings.experimentalSwaps, onclick: () => run(() => api('apply', op()), queuedMsg) }, S.running ? 'Queue swap' : 'Swap'),
+        h('button', { class: 'btn primary lg', disabled: !ready, onclick: () => run(() => api('apply', op()), queuedMsg) }, S.running ? 'Queue swap' : 'Swap'),
         h('div', { class: 'status' }, status),
         h('div', { class: 'row' },
           h('button', { class: 'btn sm grow', disabled: !ui.src, onclick: () => { const p = pool().filter((i) => canSwap(ui.src, i)); pickItem(p[Math.floor(Math.random() * p.length)], 'dst'); } }, 'Random'),
@@ -464,50 +459,22 @@ async function pickItem(item, which) {
   }
 }
 
-/* ---------- mod packs & maps ---------- */
+/* ---------- workshop maps & map merge ---------- */
 
-let packs = null, maps = null;
-const load = async (what) => { if (what === 'packs') packs = await api('packsList'); else maps = await api('mapsList'); render(true); };
-
-views.packs = () => {
-  const add = async () => { packs = await api('packsImport'); render(); };
-  const root = bento(tile('s12', head('Library', btnIcon('primary sm', 'plus', 'Add pack folder', add)),
-    h('div', { class: 'chips' }, PACK_TYPES.map(([id, label]) => h('button', { class: `chip${ui.packType === id ? ' on' : ''}`, onclick: () => { ui.packType = id; render(); } },
-      id !== 'all' && icon(glyphFor(id), 15), label)))));
-  if (!packs) { load('packs'); return root; }
-  const shown = packs.filter((p) => ui.packType === 'all' || p.type === ui.packType);
-  if (!shown.length) {
-    root.append(tile('s12', empty(ui.packType === 'all' ? 'packs' : glyphFor(ui.packType), 'No packs here yet',
-      'A pack is a folder with replacement game files and a pack.json that says which file each one replaces. The README has the format.')));
-    return root;
-  }
-  const activeIds = new Set(S.engine.active.map((r) => r.op.packId));
-  const queuedIds = new Set(S.engine.queue.filter((q) => q.op).map((q) => q.op.packId));
-  root.append(shown.map((p) => tile('card',
-    h('div', { class: 'row' }, art(p.name, p.type), h('div', { class: 'grow' }, h('b', { class: 'clip' }, p.name),
-      h('div', { class: 'muted small' }, p.error || `${plural(p.files.length, 'file')}${p.author ? ` · by ${p.author}` : ''}`)),
-    activeIds.has(p.id) ? h('span', { class: 'tag on' }, 'In game') : h('span', { class: 'tag cap' }, p.type)),
-    h('div', { class: 'row push' },
-      activeIds.has(p.id)
-        ? h('button', { class: 'btn grow', onclick: () => run(() => api('packsRevert', p.id), 'Original files restored.') }, 'Remove from game')
-        : h('button', { class: 'btn primary grow', disabled: !!p.error || queuedIds.has(p.id), onclick: () => run(() => api('packsApply', p.id), queuedMsg) }, queuedIds.has(p.id) ? 'Queued' : 'Apply'),
-      h('button', { class: 'btn danger', disabled: activeIds.has(p.id), onclick: async () => { packs = await api('packsRemove', p.id); render(); } }, 'Delete')))));
-  return root;
-};
-
+let maps = null;
 views.maps = () => {
   const add = async () => { maps = await api('mapsAdd'); render(); };
   const root = bento(
     tile('s8', head('Your maps', btnIcon('primary sm', 'plus', 'Add map files', add)),
       h('p', { class: 'muted' }, 'Add the .upk or .udk map files you have downloaded, then load one.')),
     tile('s4 ink', h('h3', {}, 'How to play'), h('p', {}, 'A loaded map takes the place of the Underpass arena. Open Training → Free Play and choose Underpass.')));
-  if (!maps) { load('maps'); return root; }
+  if (!maps) { api('mapsList').then((list) => { maps = list; if (ui.tab === 'maps') render(true); }); return root; }
   const slot = S.mapSlot.toLowerCase();
   const loaded = S.engine.active.find((r) => r.key === slot);
   const queued = S.engine.queue.find((q) => q.key === slot && q.op);
   if (!maps.length) { root.append(tile('s12', empty('maps', 'No maps yet', 'Your workshop maps show up here.'))); return root; }
   root.append(maps.map((m) => {
-    const isLoaded = loaded && loaded.op.from.endsWith(m.id), isQueued = queued && queued.op.from.endsWith(m.id);
+    const isLoaded = loaded && loaded.op.from && loaded.op.from.endsWith(m.id), isQueued = queued && queued.op.from && queued.op.from.endsWith(m.id);
     return tile('card',
       h('div', { class: 'row' }, art(m.name, 'maps'), h('div', { class: 'grow' }, h('b', { class: 'clip' }, m.name), h('div', { class: 'muted small' }, `${(m.size / 1048576).toFixed(1)} MB`)),
         isLoaded && h('span', { class: 'tag on' }, 'Loaded'), isQueued && h('span', { class: 'tag' }, 'Queued')),
@@ -520,124 +487,155 @@ views.maps = () => {
   return root;
 };
 
+// Map Merge works on the arenas that ship with the game (see main/core/arenas.js).
+let arenas = null;
+const lab = { donor: null, base: null, snow: null };
+views.lab = () => {
+  const root = bento(noteTile('warn', 's12', 'Experimental. This is built from how the game stores its arenas and has not been confirmed in game. Only you see the result, and every change can be reverted below.'));
+  if (!arenas) {
+    api('arenas').then((list) => { arenas = list; if (ui.tab === 'lab') render(true); });
+    root.append(tile('s12', empty('maps', 'Reading the arenas', 'Finding the parts each arena is built from.')));
+    return root;
+  }
+  const byId = (id) => arenas.find((a) => a.id === id);
+  const split = arenas.filter((a) => a.field), snowy = arenas.filter((a) => a.snow);
+  lab.donor ??= (split[0] || {}).id;
+  lab.base ??= (split[1] || {}).id;
+  lab.snow ??= (snowy[0] || {}).id;
+  const donor = byId(lab.donor), base = byId(lab.base), snow = byId(lab.snow);
+  const options = (list) => list.map((a) => [a.id, a.name]);
+  const choose = (key) => (id) => { lab[key] = id; render(); };
+
+  root.append(
+    tile('s7', head('Merge two arenas', h('span', { class: 'tag' }, `${split.length} arenas`)),
+      h('p', { class: 'muted' }, 'Takes the stadium from one arena (pitch, walls, goals and stands) and puts it in the surroundings of another.'),
+      h('div', { class: 'fields' },
+        h('b', {}, 'Stadium from'), select(options(split), lab.donor, choose('donor'), 300),
+        h('b', {}, 'Placed in'), select(options(split), lab.base, choose('base'), 300)),
+      donor && base && h('p', { class: 'muted small' }, donor.id === base.id ? 'Pick two different arenas.'
+        : `${base.field} is replaced by a copy of ${donor.field}. Play ${base.name} to see it.`),
+      h('button', { class: 'btn primary lg push', disabled: !donor || !base || donor.id === base.id,
+        onclick: () => run(() => api('mergeArenas', lab.donor, lab.base), queuedMsg) }, S.running ? 'Queue merge' : 'Merge'),
+      h('p', { class: 'muted small' }, `The other ${arenas.length - split.length} arenas are stored as a single file, with the stadium and its surroundings baked together, so they cannot be taken apart.`)),
+    tile('s5', head('Add snow', h('span', { class: 'tag' }, `${snowy.length} arenas`)),
+      h('p', { class: 'muted' }, 'Turns an arena snowy, where the game has something to do it with.'),
+      select(options(snowy), lab.snow, choose('snow')),
+      snow && h('p', { class: 'muted small' }, snow.snow.how === 'version'
+        ? `This arena has a snowy version in the game: ${snow.snow.gameFile} is replaced by ${snow.snow.sourceGameFile}.`
+        : `Uses the falling-snow effects from Forbidden Temple (Fire & Ice) in place of this arena’s own effects: ${snow.snow.gameFile} is replaced by ${snow.snow.sourceGameFile}.`),
+      h('button', { class: 'btn primary lg push', disabled: !snow, onclick: () => run(() => api('snowArena', lab.snow), queuedMsg) }, S.running ? 'Queue snow' : 'Add snow'),
+      h('p', { class: 'muted small' }, 'Arenas that are not in this list have no snowy version and no separate effects part, so there is nowhere to put snow.')));
+
+  const mine = [...S.engine.queue.filter((q) => q.op && q.op.kind === 'copy').map((q) => ({ q, op: q.op })), ...S.engine.active.filter((r) => r.op.kind === 'copy').map((r) => ({ r, op: r.op }))];
+  root.append(tile('s12', head('Changed arenas', h('span', { class: 'tag' }, mine.length)),
+    mine.length ? h('div', { class: 'list' }, mine.map(({ q, r, op }) => h('div', { class: 'item' }, art(op.label, 'maps'),
+      h('div', { class: 'grow' }, h('b', {}, op.label), h('div', { class: 'muted small' }, `${op.gameFile} ← ${op.sourceGameFile}`)),
+      q && h('span', { class: 'tag' }, 'Queued'),
+      q ? h('button', { class: 'btn sm', onclick: () => run(() => api('unqueue', q.key)) }, 'Cancel')
+        : h('button', { class: 'btn sm', onclick: () => run(() => api('revert', r.key), S.running ? 'Revert queued until the game closes.' : 'Original arena restored.') }, 'Revert'))))
+      : h('p', { class: 'muted' }, 'Nothing changed. Your arenas are original.')));
+  return root;
+};
+
 /* ---------- presets ---------- */
 
-let community = null;
 views.presets = () => {
   const name = field({ class: 'grow', placeholder: 'Name this setup', maxlength: 40 });
-  const paste = field({ class: 'grow', placeholder: 'Paste a shared preset code' });
+  const paste = field({ class: 'grow', placeholder: 'Paste a preset code' });
   const list = S.settings.presets, n = S.engine.active.length;
-  const url = S.settings.syncUrl.replace(/\/+$/, '');
-  const publish = async (p) => {
-    const body = { ...JSON.parse(await api('presetExport', p.id)), author: S.settings.profile.name };
-    const res = await fetch(`${url}/presets`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    if (!res.ok) throw new Error((await res.json()).error || `Server said ${res.status}`);
-  };
-  const browse = async () => {
-    const res = await fetch(`${url}/presets`);
-    if (!res.ok) throw new Error(`Server said ${res.status}`);
-    community = await res.json();
-  };
   const root = bento(
-    tile('s7', head('Save current setup'), h('p', { class: 'muted' }, n ? `${plural(n, 'change')} active right now.` : 'Nothing is active yet. Apply a swap, pack or map first.'),
+    tile('s7', head('Save current setup'), h('p', { class: 'muted' }, n ? `${plural(n, 'change')} active right now.` : 'Nothing is active yet. Apply a swap or a map first.'),
       h('div', { class: 'row push' }, name, h('button', { class: 'btn primary', disabled: !n, onclick: () => run(() => api('presetSave', name.value), 'Preset saved.') }, 'Save'))),
-    tile('s5', head('Import'), h('p', { class: 'muted' }, 'Got a code from a friend? Paste it here.'),
+    tile('s5', head('Import'), h('p', { class: 'muted' }, 'Paste a preset code to add that setup.'),
       h('div', { class: 'row push' }, paste, h('button', { class: 'btn', onclick: () => run(() => api('presetImport', paste.value), 'Preset imported.') }, 'Import'))));
   root.append(list.length ? list.map((p) => tile('card',
     h('div', { class: 'row' }, art(p.name, 'presets'), h('div', { class: 'grow' }, h('b', { class: 'clip' }, p.name), h('div', { class: 'muted small' }, `${plural(p.ops.length, 'change')} · ${new Date(p.savedAt).toLocaleDateString()}`))),
     h('p', { class: 'muted small' }, p.ops.slice(0, 4).map((o) => o.label).join(' · ') || 'Empty'),
     h('div', { class: 'row wrap push' },
       h('button', { class: 'btn primary grow', onclick: () => run(() => api('presetLoad', p.id), (r) => (r.errors.length ? `Loaded with ${plural(r.errors.length, 'problem')}: ${r.errors[0]}` : 'Preset loaded.')) }, 'Load'),
-      h('button', { class: 'btn', onclick: async () => { await navigator.clipboard.writeText(await api('presetExport', p.id)); toast('Share code copied.'); } }, 'Copy'),
-      url && h('button', { class: 'btn', onclick: () => run(() => publish(p), 'Published to the sync server.') }, 'Publish'),
+      h('button', { class: 'btn', onclick: async () => { await navigator.clipboard.writeText(await api('presetExport', p.id)); toast('Preset code copied.'); } }, 'Copy code'),
       h('button', { class: 'btn danger', onclick: () => run(() => api('presetDelete', p.id)) }, 'Delete'))))
     : tile('s12', empty('presets', 'No presets yet', 'Set your car up the way you like, then save it here.')));
-  root.append(tile('s12', head('Community', url ? h('button', { class: 'btn sm', onclick: () => run(browse) }, 'Browse shared presets') : h('span', { class: 'muted small' }, 'Set a sync server in Profile to share presets.')),
-    community && (community.length ? h('div', { class: 'list' }, community.map((c) => h('div', { class: 'item' }, art(c.name, 'presets'),
-      h('div', { class: 'grow' }, h('b', {}, c.name), h('div', { class: 'muted small' }, `${plural(c.ops.length, 'swap')}${c.author ? ` · by ${c.author}` : ''}`)),
-      h('button', { class: 'btn sm', onclick: () => run(() => api('presetImport', JSON.stringify({ boostpadPreset: 1, name: c.name, ops: c.ops })), 'Saved to your presets.') }, 'Save'))))
-      : h('p', { class: 'muted small' }, 'Nothing shared on this server yet.'))));
   return root;
 };
 
-/* ---------- overlay & spotify ---------- */
-
-views.overlay = () => {
-  const o = S.settings.overlay, upd = (patch) => set('overlay', { ...o, ...patch });
-  const feature = (glyph, name, text, on, key) => tile(`s6${on ? ' accent' : ''}`,
-    h('div', { class: 'row' }, h('span', { class: 'art lg', style: 'background:var(--tile-2);color:var(--accent-text)' }, icon(glyph, 30)), h('span', { class: 'grow' }), toggle(on, (v) => upd({ [key]: v }))),
-    h('div', { class: 'push' }, h('h2', {}, name), h('p', { class: 'muted' }, text)));
-  return bento(
-    feature('anthems', 'Now playing', 'A small pill at the top of your screen with the track, artist and progress.', !!o.nowPlaying, 'nowPlaying'),
-    feature('overlay', 'Controller', 'Every button, stick and trigger you press, live, in the top-right corner.', !!o.controller, 'controller'),
-    tile('s7', head('Controller look'),
-      h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, 'Colour'), h('div', { class: 'muted small' }, 'Match your own pad.')),
-        select([['light', 'White'], ['dark', 'Black']], o.style, (v) => upd({ style: v }))),
-      h('div', { class: 'opt-row' }, h('div', { style: 'width:150px' }, h('b', {}, 'Size'), h('div', { class: 'muted small', id: 'ovsize' }, `${o.size}%`)),
-        slider(50, 160, o.size, (v) => upd({ size: v }), (v) => { document.getElementById('ovsize').textContent = `${v}%`; }))),
-    noteTile('info', 's5', 'Overlays are separate click-through windows drawn on top of the game. Run Rocket League in borderless or windowed mode to see them. They do not read or change the game.'));
-};
+/* ---------- overlay: music and controller over the game ---------- */
 
 let media = { found: false }; // what Windows says is playing (see main/media.js)
-let musicUI = null;           // handles of the mounted Spotify page
+let sources = null;           // music apps that can be followed
+let overlayUI = null;         // handles of the mounted Overlay page
 const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const mediaNow = () => Math.max(0, Math.min(media.duration || 0, media.position + (media.playing ? (Date.now() - media.updated) / 1000 : 0)));
+const ANCHORS = [['tl', 'Top left'], ['tc', 'Top centre'], ['tr', 'Top right'], ['bl', 'Bottom left'], ['bc', 'Bottom centre'], ['br', 'Bottom right']];
+const PAD_LOOKS = [
+  ['White', '#f2f3f5', '#1b1c21'], ['Black', '#1d1f24', '#3a3d46'], ['Grey', '#8d929d', '#1b1c21'], ['Red', '#c8102e', '#1b1c21'],
+  ['Blue', '#1f6feb', '#101826'], ['Purple', '#7c4dff', '#17122b'], ['Pink', '#f472b6', '#2a1420'], ['Gold', '#d4a72c', '#1b1c21'],
+];
+const GLOWS = ['#00d8c8', '#38bdf8', '#818cf8', '#f472b6', '#fb7185', '#fb923c', '#facc15', '#a3e635', '#ffffff'];
 
-views.music = () => {
-  const o = S.settings.overlay;
-  const cover = h('div', { class: 'cover' }), name = h('h2', { class: 'clip' }), artist = h('p', { class: 'muted clip' });
-  const source = h('span', { class: 'tag' }), fill = h('i'), time = h('span', { class: 'muted small' });
+views.overlay = () => {
+  const o = S.settings.overlay, moving = S.overlayMove;
+  const upd = (kind, patch) => set('overlay', { ...o, [kind]: { ...o[kind], ...patch } });
+  if (!sources) api('mediaSources').then((list) => { sources = list; if (ui.tab === 'overlay') render(); });
+  const place = (kind) => h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, 'Position'), h('div', { class: 'muted small' }, o[kind].x == null ? 'Default place. Pick a corner, or use Move overlays to drag it.' : `Custom: ${o[kind].x}, ${o[kind].y}`)),
+    select([['', o[kind].x == null ? 'Default' : 'Custom'], ...ANCHORS, ...(o[kind].x == null ? [] : [['reset', 'Back to default']])], '', (anchor) => anchor && run(() => api('overlayAnchor', kind, anchor)), 170));
+  const sizeRow = (kind, min, max) => { const label = h('div', { class: 'muted small' }, `${o[kind].size}%`); return h('div', { class: 'opt-row' }, h('div', { style: 'width:120px' }, h('b', {}, 'Size'), label), slider(min, max, o[kind].size, (v) => upd(kind, { size: v }), (v) => { label.textContent = `${v}%`; })); };
+
+  // --- music ---
+  const cover = h('div', { class: 'cover sm' }), name = h('b', { class: 'clip' }), artist = h('div', { class: 'muted small clip' }), fill = h('i'), time = h('span', { class: 'muted small' });
   const press = (action) => () => {
-    if (action === 'toggle') { media = { ...media, position: mediaNow(), updated: Date.now(), playing: !media.playing }; paint(); } // show it at once
+    if (action === 'toggle' && media.found) { media = { ...media, position: mediaNow(), updated: Date.now(), playing: !media.playing }; paint(); } // show it at once
     api('mediaControl', action);
   };
-  const playBtn = h('button', { class: 'btn primary lg grow', onclick: press('toggle') });
-  const pillArt = h('span', { class: 'npart' }), pillTitle = h('b', { class: 'clip' }), pillArtist = h('span', { class: 'muted small clip' });
-
-  const playing = h('div', { class: 'col grow', style: 'gap:18px' },
-    h('div', { class: 'row', style: 'gap:20px' }, cover,
-      h('div', { class: 'col grow', style: 'gap:6px' }, name, artist, h('div', { class: 'progress' }, fill), time)),
-    h('div', { class: 'row push' }, h('button', { class: 'btn lg', onclick: press('prev') }, 'Previous'), playBtn, h('button', { class: 'btn lg', onclick: press('next') }, 'Next')));
-  const idle = empty('anthems', 'Nothing is playing', 'Open Spotify on this PC and press play. Boostpad reads the track from Windows, so there is nothing to log in to.');
-  const hero = tile('s7 ink', head('Now playing', source), playing, idle);
-
-  function tick() {
-    if (!media.found) return;
-    const now = mediaNow();
-    fill.style.width = media.duration ? `${(now / media.duration) * 100}%` : '0';
-    time.textContent = media.duration ? `${clock(now)} / ${clock(media.duration)}` : '';
-  }
+  const playBtn = h('button', { class: 'btn sm primary grow', onclick: press('toggle') });
+  const tick = () => { fill.style.width = media.found && media.duration ? `${(mediaNow() / media.duration) * 100}%` : '0'; time.textContent = media.found && media.duration ? `${clock(mediaNow())} / ${clock(media.duration)}` : ''; };
   function paint() {
-    playing.hidden = !media.found;
-    idle.hidden = !!media.found;
-    source.hidden = !media.found;
-    if (media.found) {
-      cover.replaceChildren(media.art ? h('img', { src: media.art, alt: '' }) : icon('anthems', 40));
-      name.textContent = media.title;
-      artist.textContent = [media.artist, media.album].filter(Boolean).join(' · ');
-      source.textContent = media.source;
-      playBtn.textContent = media.playing ? 'Pause' : 'Play';
-    }
-    pillTitle.textContent = media.found ? media.title : 'Track title';
-    pillArtist.textContent = media.found ? media.artist : 'Artist';
-    pillArt.style.backgroundImage = media.found && media.art ? `url("${media.art}")` : 'none';
+    cover.replaceChildren(media.found && media.art ? h('img', { src: media.art, alt: '' }) : icon('anthems', 26));
+    name.textContent = media.found ? media.title : 'Nothing is playing';
+    artist.textContent = media.found ? [media.artist, media.source].filter(Boolean).join(' · ') : 'Start a song in any music app on this PC.';
+    playBtn.textContent = media.found && media.playing ? 'Pause' : 'Play';
     tick();
   }
-  musicUI = { paint, tick, root: hero };
-  paint();
+  const musicTile = tile(`s6${o.music.on ? ' ink' : ''}`, head('Now playing', toggle(o.music.on, (v) => upd('music', { on: v }))),
+    h('p', { class: 'muted' }, 'A small pill over the game with the track, artist and progress.'),
+    h('div', { class: 'nowcard' }, cover, h('div', { class: 'col grow', style: 'gap:3px' }, name, artist, h('div', { class: 'progress' }, fill), time)),
+    h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: press('prev') }, 'Previous'), playBtn, h('button', { class: 'btn sm', onclick: press('next') }, 'Next')),
+    h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, 'Music app'), h('div', { class: 'muted small' }, 'Follow one app, or whichever is playing.')),
+      select((sources || [{ id: 'auto', name: 'Any app (whatever is playing)' }]).map((s) => [s.id, s.name]), o.music.source, (v) => upd('music', { source: v }), 250)),
+    sizeRow('music', 70, 160), place('music'));
 
-  return bento(hero,
-    tile('s5', head('In-game overlay', toggle(!!o.nowPlaying, (v) => set('overlay', { ...o, nowPlaying: v }))),
-      h('p', { class: 'muted' }, 'Shows the track in a small pill at the top of your screen while you play. Needs borderless or windowed mode.'),
-      h('div', { class: 'nppreview push' }, h('div', { class: 'nppill' }, pillArt,
-        h('span', { class: 'col', style: 'gap:0;min-width:0' }, pillTitle, pillArtist), h('span', { class: 'npeq' }, h('i'), h('i'), h('i'))))),
-    noteTile('info', 's12', 'Works with the Spotify desktop app, and with the Spotify web player in a browser. It follows what plays on this PC: music playing on your phone or another device does not show up.'));
+  // --- controller ---
+  const preview = Pad.mount(h('div', { class: 'padpreview' }));
+  Pad.style(preview, o.pad);
+  const look = PAD_LOOKS.find(([, body, keys]) => body === o.pad.body && keys === o.pad.keys);
+  const opacityLabel = h('div', { class: 'muted small' }, `${o.pad.opacity}%`);
+  const padTile = tile(`s6${o.pad.on ? ' ink' : ''}`, head('Controller', toggle(o.pad.on, (v) => upd('pad', { on: v }))),
+    h('p', { class: 'muted' }, 'Shows every button, trigger and stick you press. Press something on your controller to try it here.'),
+    preview,
+    h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, 'Colour'), h('div', { class: 'muted small' }, 'The shell and its buttons.')),
+      select(PAD_LOOKS.map(([label]) => [label, label]).concat(look ? [] : [['', 'Custom']]), look ? look[0] : '', (v) => { const pick = PAD_LOOKS.find(([label]) => label === v); if (pick) upd('pad', { body: pick[1], keys: pick[2] }); }, 170)),
+    h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, 'Pressed colour'), h('div', { class: 'muted small' }, 'What a button lights up in.')),
+      h('div', { class: 'swatches' }, GLOWS.map((c) => h('button', { class: `swatch${o.pad.glow === c ? ' on' : ''}`, style: `background:${c}`, 'aria-label': c, onclick: () => upd('pad', { glow: c }) })))),
+    h('div', { class: 'opt-row' }, h('div', { style: 'width:120px' }, h('b', {}, 'Opacity'), opacityLabel),
+      slider(20, 100, o.pad.opacity, (v) => upd('pad', { opacity: v }), (v) => { opacityLabel.textContent = `${v}%`; Pad.style(preview, { ...o.pad, opacity: v }); })),
+    sizeRow('pad', 50, 200), place('pad'));
+
+  overlayUI = { paint, tick, preview, root: padTile };
+  paint();
+  return bento(
+    tile('s12 bar', h('div', { class: 'grow' }, h('b', {}, 'Only while playing Rocket League'), h('div', { class: 'muted small' }, 'Overlays appear when Rocket League is the window in front, and hide when you tab out.')),
+      toggle(o.onlyInGame, (v) => set('overlay', { ...o, onlyInGame: v })),
+      h('button', { class: 'btn', onclick: () => { api('overlayPreview'); toast('Showing overlays for 8 seconds.'); } }, 'Show for 8 seconds'),
+      h('button', { class: `btn${moving ? ' primary' : ''}`, onclick: () => run(() => api('overlayMove', !moving), moving ? 'Positions saved.' : 'Drag the overlays where you want them, then press Done.') }, moving ? 'Done moving' : 'Move overlays')),
+    musicTile, padTile,
+    noteTile('info', 's12', 'Overlays are separate click-through windows drawn on top of the game, so Rocket League must run in borderless or windowed mode. They do not read or change the game. Music comes from Windows’ own media controls, so anything that appears in the Windows volume flyout works: Spotify, Apple Music, TIDAL, Deezer, Amazon Music, YouTube Music and SoundCloud in a browser, VLC, foobar2000 and more.'));
 };
 
-const musicLive = () => ui.tab === 'music' && musicUI && musicUI.root.isConnected;
-window.boostpad.on('media', (state) => { media = state; if (musicLive()) musicUI.paint(); });
-api('mediaState').then((state) => { media = state; if (musicLive()) musicUI.paint(); });
-setInterval(() => { if (musicLive()) musicUI.tick(); }, 500);
+const overlayLive = () => ui.tab === 'overlay' && overlayUI && overlayUI.root.isConnected;
+window.boostpad.on('media', (state) => { media = state; if (overlayLive()) overlayUI.paint(); });
+api('mediaState').then((state) => { media = state; if (overlayLive()) overlayUI.paint(); });
+setInterval(() => { if (overlayLive()) overlayUI.tick(); }, 500);
+(function padLoop() { if (overlayLive()) Pad.update(overlayUI.preview, Pad.first()); requestAnimationFrame(padLoop); }());
 
 /* ---------- profile ---------- */
 
@@ -650,33 +648,11 @@ function profileCard(p) {
       p.rank && h('span', { class: 'tag', style: 'align-self:flex-start' }, p.rank)));
 }
 
-let lookedUp = null;
 views.profile = () => {
   const p = S.settings.profile, upd = (patch) => set('profile', { ...p, ...patch });
-  const url = S.settings.syncUrl.replace(/\/+$/, '');
-  const publish = async () => {
-    const me = p.id ? p : { ...p, id: crypto.randomUUID(), secret: crypto.randomUUID() };
-    const res = await fetch(`${url}/profiles/${me.id}`, { method: 'PUT', headers: { 'content-type': 'application/json', 'x-secret': me.secret },
-      body: JSON.stringify({ name: me.name, title: me.title, titleColor: me.titleColor, glow: me.glow, rank: me.rank, avatar: me.avatar }) });
-    if (!res.ok) throw new Error(`Server said ${res.status}`);
-    return api('setSetting', 'profile', me);
-  };
-  const friend = field({ class: 'grow', placeholder: 'A friend’s profile ID' });
-  const lookup = async () => {
-    const res = await fetch(`${url}/profiles/${encodeURIComponent(friend.value.trim())}`);
-    if (!res.ok) throw new Error('Profile not found');
-    lookedUp = await res.json();
-  };
   return bento(
-    tile('s7', head('Your card'), profileCard(p)),
-    tile('s5 r2', head('Sharing'),
-      h('p', { class: 'muted small' }, 'Other Boostpad users see your card through a sync server. Anyone can run the one in the server/ folder; there is no central server and nothing to pay for.'),
-      field({ placeholder: 'Sync server URL, e.g. http://localhost:8787', value: S.settings.syncUrl, onchange: (e) => set('syncUrl', e.target.value.trim()) }),
-      h('button', { class: 'btn primary', disabled: !url, onclick: () => run(publish, 'Profile published.') }, 'Publish my card'),
-      p.id && h('p', { class: 'muted small', style: 'word-break:break-all' }, `Your profile ID: ${p.id}`),
-      head('Find a friend'),
-      h('div', { class: 'row' }, friend, h('button', { class: 'btn', disabled: !url, onclick: () => run(lookup) }, 'Look up')),
-      lookedUp && profileCard(lookedUp)),
+    tile('s5', head('Your card'), profileCard(p),
+      h('p', { class: 'muted small push' }, 'This card lives in Boostpad. It does not change your name, title or rank inside Rocket League: that would need code injected into the running game, which Boostpad does not do.')),
     tile('s7', head('Edit'), h('div', { class: 'fields' },
       h('b', {}, 'Name'), field({ maxlength: 24, value: p.name, onchange: (e) => upd({ name: e.target.value }) }),
       h('b', {}, 'Title'), field({ maxlength: 32, value: p.title, onchange: (e) => upd({ title: e.target.value }) }),
@@ -685,8 +661,7 @@ views.profile = () => {
       h('b', {}, 'Rank badge'), h('div', {}, select(RANKS.map((r) => [r, r || 'None']), p.rank, (v) => upd({ rank: v }), 220)),
       h('b', {}, 'Picture'), h('div', { class: 'row' },
         h('button', { class: 'btn', onclick: () => run(async () => { const a = await api('pickAvatar'); return a ? api('setSetting', 'profile', { ...p, avatar: a }) : null; }) }, 'Choose picture'),
-        p.avatar && h('button', { class: 'btn danger', onclick: () => upd({ avatar: '' }) }, 'Remove')))),
-    noteTile('info', 's12', 'This card lives in Boostpad. It does not change your name, title or rank inside Rocket League: that would need code injected into the running game, which Boostpad does not do.'));
+        p.avatar && h('button', { class: 'btn danger', onclick: () => upd({ avatar: '' }) }, 'Remove')))));
 };
 
 /* ---------- settings ---------- */
@@ -702,21 +677,16 @@ views.settings = () => {
         h('button', { class: 'btn sm', onclick: () => run(() => api('browseInstall', S.install.platform)) }, 'Change')),
       h('div', { class: 'opt-row push' }, h('div', { class: 'grow' }, h('b', {}, 'Launcher'), h('div', { class: 'muted small' }, 'Used by the Play button.')),
         select([['epic', 'Epic Games'], ['steam', 'Steam']], S.install.platform, (v) => set('platform', v)))),
-    tile('s7', head('Item swaps', h('span', { class: 'tag' }, 'Experimental')),
-      h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, 'Enable item swaps'),
-        h('div', { class: 'muted small' }, 'Lets the Garage rewrite item packages. Originals are always backed up and can be restored from the Garage.')),
-      toggle(S.settings.experimentalSwaps, (v) => set('experimentalSwaps', v))),
-      h('p', { class: 'muted small' }, 'Rocket League runs with Easy Anti-Cheat. Boostpad does not touch or work around it and cannot promise that modified files are accepted online. Changing game files may break the game’s terms of service and could put your account at risk. Use it at your own risk; the launcher’s “Verify files” always restores a clean install.')),
-    tile('s12', head('Item pictures and keys', h('span', { class: `tag${S.keys ? ' on' : ''}` }, S.keys ? `${S.keys.toLocaleString()} extra keys loaded` : 'Built-in key only')),
-      h('p', { class: 'muted' }, 'Rocket League encrypts item packages with many different keys. Boostpad includes the one long-published key, which opens about two thirds of items. Items it cannot open show a lock instead of a picture and cannot be used as a new look. If you have a key list (a keys.txt, one key per line, as published by community tools), add it to open the rest.'),
-      h('div', { class: 'row wrap' },
-        h('button', { class: 'btn primary', onclick: () => run(async () => { const res = await api('importKeys'); catalog = null; return res; }, (r) => (r.keys ? `${r.keys.toLocaleString()} keys loaded. Pictures are being re-read.` : 'No change.')) }, S.keys ? 'Replace key list' : 'Add key list'),
-        S.keys ? h('button', { class: 'btn danger', onclick: () => run(async () => { const res = await api('removeKeys'); catalog = null; return res; }, 'Key list removed.') }, 'Remove') : null)),
-    tile('s5', head('Data'), h('p', { class: 'muted' }, 'Backups, maps, packs and settings live in the data folder.'),
+    tile('s7', head('Item pictures and keys', h('span', { class: `tag${S.keys ? ' on' : ''}` }, S.keys ? `${S.keys.toLocaleString()} extra keys loaded` : 'Built-in key only')),
+      h('p', { class: 'muted' }, 'Rocket League encrypts item packages with many different keys. Boostpad includes one, which opens about two thirds of items. Items it cannot open show a lock and cannot be used as a new look. Add a key list (a keys.txt, one key per line) to open the rest.'),
+      h('div', { class: 'row wrap push' },
+        h('button', { class: 'btn primary', onclick: () => run(async () => { const res = await api('importKeys'); catalog = null; arenas = null; return res; }, (r) => (r.keys ? `${r.keys.toLocaleString()} keys loaded. Pictures are being re-read.` : 'No change.')) }, S.keys ? 'Replace key list' : 'Add key list'),
+        S.keys ? h('button', { class: 'btn danger', onclick: () => run(async () => { const res = await api('removeKeys'); catalog = null; arenas = null; return res; }, 'Key list removed.') }, 'Remove') : null)),
+    tile('s5', head('Data'), h('p', { class: 'muted' }, 'Backups, maps and settings live in the data folder.'),
       h('div', { class: 'row wrap push' },
         h('button', { class: 'btn', onclick: () => api('openDataFolder') }, 'Open data folder'),
         h('button', { class: 'btn danger', disabled: !S.engine.active.length, onclick: () => run(() => api('revertAll'), 'Everything reverted.') }, 'Revert every change'))),
-    noteTile('info', 's12', `Boostpad v${S.version} is a free, open-source fan project. Not affiliated with or endorsed by Psyonix or Epic Games. Rocket League is a trademark of Psyonix LLC.`));
+    noteTile('warn', 's12', `Boostpad v${S.version} changes files in your Rocket League folder and backs up each one first. Rocket League runs with Easy Anti-Cheat; Boostpad does not touch or work around it and cannot promise that changed files are accepted online. Changing game files may break the game’s terms of service and could put your account at risk, so use it at your own risk. Your launcher’s “Verify files” always restores a clean install. Free and open source; not affiliated with Psyonix or Epic Games.`));
 };
 
 /* ---------- boot ---------- */

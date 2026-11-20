@@ -182,6 +182,22 @@ function probeFile(file, extraKeys = []) {
   } catch { return false; } finally { if (fd !== undefined) fs.closeSync(fd); }
 }
 
+// The name table of a package, read without loading the whole file (maps are 10-50 MB,
+// their header a small part of that).
+function readNamesFile(file, extraKeys = []) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const head = Buffer.alloc(16384);
+    const got = fs.readSync(fd, head, 0, head.length, 0);
+    const summary = parseSummary(head.subarray(0, got));
+    const end = summary.nameOffset + ((summary.totalHeaderSize - summary.garbageSize - summary.nameOffset + 15) & ~15);
+    const buf = Buffer.alloc(end);
+    fs.readSync(fd, buf, 0, end, 0);
+    // headerRange() only needs the file to be at least as long as the encrypted block
+    return readPackage(buf, extraKeys).names.map((n) => n.text);
+  } finally { fs.closeSync(fd); }
+}
+
 // ----- read-only access to objects (used for thumbnails) -----
 
 // Import/export tables and the list of compressed chunks.
@@ -260,5 +276,5 @@ function baseName(fileName) {
 
 module.exports = {
   UpkError, DEFAULT_KEYS, parseSummary, readPackage, readPackageFile, renameNames, baseName,
-  probeFile, parseKeys, readTables, inflateChunk, readObject,
+  probeFile, parseKeys, readNamesFile, readTables, inflateChunk, readObject,
 };

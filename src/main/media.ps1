@@ -1,9 +1,12 @@
 # Reads what is playing from Windows' own media controls (the same source as the
-# volume flyout). No login and no web requests. $action is set by media.js:
-#   watch  - print one JSON line per second describing the current track
-#   toggle / next / prev - press that button on the session, then exit
-# Prefers the Spotify app; otherwise uses whatever Windows says is current
-# (for example the Spotify web player in a browser).
+# volume flyout), so it works with any app that shows up there: Spotify, Apple
+# Music, TIDAL, Deezer, Amazon Music, browsers (YouTube Music, SoundCloud), VLC,
+# foobar2000 and so on. No login and no web requests.
+# Set by media.js before this script:
+#   $action   watch | toggle | next | prev
+#   $prefer   a regex on the app id to follow one app only, or '' for "whatever is playing"
+# watch prints one JSON line per second: the track, plus the name of the program
+# whose window is in front (used to show overlays only while the game is in front).
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -25,9 +28,23 @@ $asStream = [System.IO.WindowsRuntimeStreamExtensions].GetMethods() |
   Where-Object { $_.Name -eq 'AsStreamForRead' -and $_.GetParameters().Count -eq 1 } | Select-Object -First 1
 $manager = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
 
+$browsers = 'chrome|msedge|firefox|opera|brave|vivaldi'
+function Test-Playing($session) { $session.GetPlaybackInfo().PlaybackStatus.ToString() -eq 'Playing' }
 function Get-Session {
-  $spotify = @($manager.GetSessions()) | Where-Object { $_.SourceAppUserModelId -match 'spotify' } | Select-Object -First 1
-  if ($spotify) { $spotify } else { $manager.GetCurrentSession() }
+  $all = @($manager.GetSessions())
+  if ($prefer) {
+    $all = @($all | Where-Object { $_.SourceAppUserModelId -match $prefer })
+    if (-not $all.Count) { return $null }
+  }
+  $playing = @($all | Where-Object { Test-Playing $_ })
+  if ($playing.Count) {
+    # a music app wins over a browser tab when both are playing
+    $app = $playing | Where-Object { $_.SourceAppUserModelId -notmatch $browsers } | Select-Object -First 1
+    if ($app) { return $app }
+    return $playing[0]
+  }
+  if ($prefer) { return $all[0] }
+  $manager.GetCurrentSession()
 }
 
 if ($action -ne 'watch') {
@@ -38,6 +55,23 @@ if ($action -ne 'watch') {
     elseif ($action -eq 'prev') { $null = Await ($session.TrySkipPreviousAsync()) ([bool]) }
   }
   exit 0
+}
+
+# Which program's window is in front. Asks Windows; does not touch the program itself.
+$canSeeFront = $true
+try {
+  Add-Type -Namespace Boostpad -Name Front -MemberDefinition @'
+[DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint processId);
+'@
+} catch { $canSeeFront = $false }
+function Get-Front {
+  if (-not $canSeeFront) { return '' }
+  try {
+    $id = [uint32]0
+    $null = [Boostpad.Front]::GetWindowThreadProcessId([Boostpad.Front]::GetForegroundWindow(), [ref]$id)
+    (Get-Process -Id $id).ProcessName
+  } catch { '' }
 }
 
 $artFor = ''
@@ -55,7 +89,7 @@ while ($true) {
         title    = $media.Title
         artist   = $media.Artist
         album    = $media.AlbumTitle
-        playing  = ($session.GetPlaybackInfo().PlaybackStatus.ToString() -eq 'Playing')
+        playing  = (Test-Playing $session)
         position = [math]::Round($timeline.Position.TotalSeconds, 1)
         duration = [math]::Round($timeline.EndTime.TotalSeconds, 1)
         updated  = $timeline.LastUpdatedTime.ToUnixTimeMilliseconds()
@@ -76,6 +110,7 @@ while ($true) {
   } catch {
     $state = @{ found = $false; error = $_.Exception.Message }
   }
+  $state.front = Get-Front
   [Console]::Out.WriteLine(($state | ConvertTo-Json -Compress))
   Start-Sleep -Milliseconds 1000
 }

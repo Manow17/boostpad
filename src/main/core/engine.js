@@ -7,7 +7,9 @@
 //       look of another item (target): target's package, internally renamed to
 //       the source's name, is written over the source file.
 //   { kind: 'file', gameFile, from }           gameFile is replaced by an
-//       arbitrary file (workshop map, mod pack file).
+//       arbitrary file (a workshop map).
+//   { kind: 'copy', gameFile, sourceGameFile } gameFile is replaced by a copy of
+//       another game file (an arena part or a whole arena).
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -54,6 +56,15 @@ class Engine {
 
   buildContent(op) {
     if (op.kind === 'file') return fs.readFileSync(op.from);
+    if (op.kind === 'copy') {
+      if (!op.sourceGameFile || path.basename(op.sourceGameFile) !== op.sourceGameFile) throw new EngineError('BAD_OP', 'Invalid source file name');
+      if (op.sourceGameFile.toLowerCase() === op.gameFile.toLowerCase()) throw new EngineError('SAME_ITEM', 'Pick two different files');
+      const key = op.sourceGameFile.toLowerCase();
+      // if Boostpad has changed the source itself, copy its original
+      const from = this.store.get('active')[key] ? path.join(this.backupDir, key) : path.join(this.cooked(), op.sourceGameFile);
+      if (!fs.existsSync(from)) throw new EngineError('NO_SUCH_GAME_FILE', `${op.sourceGameFile} is not in the game folder`);
+      return fs.readFileSync(from);
+    }
     if (op.kind !== 'swap') throw new EngineError('BAD_OP', `Unknown operation "${op.kind}"`);
     if (op.sourceFile.toLowerCase() === op.targetFile.toLowerCase()) {
       throw new EngineError('SAME_ITEM', 'Pick two different items');

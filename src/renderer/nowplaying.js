@@ -1,22 +1,22 @@
-// Top-of-screen "now playing" pill. Click-through, drawn over the game.
+// "Now playing" pill. Click-through, drawn over the game.
 const $ = (id) => document.getElementById(id);
-let media = { found: false }, shownTrack = '';
+let media = { found: false }, shownTrack = '', edit = false;
 
 function paint() {
   const pill = $('pill');
   pill.classList.toggle('off', !media.found);
   pill.classList.toggle('paused', !!media.found && !media.playing);
-  if (!media.found) return;
-  const track = `${media.title}|${media.artist}`;
+  const title = media.found ? media.title : (edit ? 'Now playing' : ''), artist = media.found ? media.artist : (edit ? 'Drag to move' : '');
+  const track = `${title}|${artist}`;
   if (track !== shownTrack) {
     shownTrack = track;
-    $('title').textContent = media.title;
-    $('artist').textContent = media.artist;
+    $('title').textContent = title;
+    $('artist').textContent = artist;
     $('text').classList.remove('change');
     void $('text').offsetWidth; // restart the animation
     $('text').classList.add('change');
   }
-  $('art').style.backgroundImage = media.art ? `url("${media.art}")` : 'none';
+  $('art').style.backgroundImage = media.found && media.art ? `url("${media.art}")` : 'none';
   tick();
 }
 
@@ -26,6 +26,15 @@ function tick() {
   $('bar').firstElementChild.style.width = `${Math.max(0, Math.min(100, (now / media.duration) * 100))}%`;
 }
 
+function configure(cfg) {
+  edit = !!cfg.edit;
+  document.body.classList.toggle('edit', edit);
+  $('stage').style.transform = `scale(${(cfg.size || 100) / 100})`;
+  paint();
+}
+
 window.boostpad.on('media', (state) => { media = state; paint(); });
+window.boostpad.on('overlay-config', configure);
+window.boostpad.call('overlayConfig', 'music').then(configure);
 window.boostpad.call('mediaState').then((state) => { media = state; paint(); });
 setInterval(tick, 1000);
