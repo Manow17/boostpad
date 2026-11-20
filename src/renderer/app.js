@@ -300,7 +300,12 @@ async function ensureCatalog() {
   catalog = await api('getCatalog');
   catalog.counts = {};
   catalog.byId = new Map();
-  for (const i of catalog.items) { catalog.counts[i.category] = (catalog.counts[i.category] || 0) + 1; catalog.byId.set(i.id, i); }
+  for (const i of catalog.items) {
+    catalog.counts[i.category] = (catalog.counts[i.category] || 0) + 1;
+    catalog.byId.set(i.id, i);
+    i.search = `${i.label} ${i.sub} ${i.name} ${i.file}`.toLowerCase(); // shop name, car, internal name
+  }
+  catalog.catLabel = Object.fromEntries(catalog.categories.map((c) => [c.id, c.label]));
   if (ui.tab === 'garage') render(true);
 }
 
@@ -336,7 +341,7 @@ views.garage = () => {
   if (!catalog) { ensureCatalog(); root.append(tile('s12', empty('cars', 'Reading your game files', 'Building the item list from your own install.'))); return root; }
 
   const pool = () => catalog.items.filter((i) => i.category === ui.cat);
-  const op = () => ({ kind: 'swap', sourceFile: ui.src.file, targetFile: ui.dst.file, category: ui.cat, label: `${ui.src.name} → ${ui.dst.name}` });
+  const op = () => ({ kind: 'swap', sourceFile: ui.src.file, targetFile: ui.dst.file, category: ui.src.category, label: `${ui.src.label} → ${ui.dst.label}` });
   const bar = h('section', { class: 'swapbar' });
   const grid = h('div', { class: `grid${popGrid ? ' pop' : ''}` });
   const count = h('span', { class: 'muted small' });
@@ -345,10 +350,10 @@ views.garage = () => {
 
   function paintBar() {
     const pick = (which, label, item, hint) => h('button', { class: `pick${ui.slot === which ? ' on' : ''}`, onclick: () => { ui.slot = which; paintBar(); fill(); } },
-      item ? picture(item, ui.cat, 'lg') : h('span', { class: 'pic lg blank' }, which === 'src' ? '1' : '2'),
+      item ? picture(item, item.category, 'lg') : h('span', { class: 'pic lg blank' }, which === 'src' ? '1' : '2'),
       h('span', { class: 'col grow', style: 'gap:4px' }, h('h3', {}, label),
-        item ? h('span', { class: 'name clip' }, item.name) : h('span', { class: 'muted' }, hint),
-        item && h('span', { class: 'muted small clip' }, item.file)));
+        item ? h('span', { class: 'name clip' }, item.label) : h('span', { class: 'muted' }, hint),
+        item && h('span', { class: 'muted small clip' }, [item.sub, item.file].filter(Boolean).join(' · '))));
     const ready = ui.check && ui.check.ok;
     const queued = ui.src && S.engine.queue.some((q) => q.key === ui.src.id);
     const applied = ui.src && S.engine.active.some((r) => r.key === ui.src.id);
@@ -374,8 +379,10 @@ views.garage = () => {
   }
 
   function cell(i, n, blocked) {
-    return h('button', { class: `cell${blocked ? ' no' : ''}`, 'data-id': i.id, style: n < 24 && `--i:${n}`, 'aria-label': i.name, onclick: () => pickItem(i, ui.slot) },
-      picture(i, ui.cat), h('span', { class: 'name' }, i.name));
+    // under the name: the car a decal is for, or (when searching everywhere) the category
+    const sub = everywhere() ? [catalog.catLabel[i.category], i.sub].filter(Boolean).join(' · ') : i.sub;
+    return h('button', { class: `cell${blocked ? ' no' : ''}`, 'data-id': i.id, style: n < 24 && `--i:${n}`, 'aria-label': i.label, onclick: () => pickItem(i, ui.slot) },
+      picture(i, i.category), h('span', { class: 'name' }, i.label), sub && h('span', { class: 'sub' }, sub));
   }
   function mark() { // show which cells are picked, without rebuilding them
     for (const el of grid.children) {
@@ -392,6 +399,8 @@ views.garage = () => {
   const sentinel = h('div', { style: 'height:1px' });
   let list = [], shown = 0;
   const picking = () => ui.slot === 'dst' && ui.src; // choosing a look for a known item
+  // A search looks in every category, until you are choosing a look (that has to match your item's category).
+  const everywhere = () => !!ui.q.trim() && !picking();
   function more() {
     if (shown >= list.length) return;
     const blocked = (i) => !!picking() && i !== ui.src && !canSwap(ui.src, i);
@@ -405,15 +414,17 @@ views.garage = () => {
   const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) more(); }, { root: document.getElementById('view'), rootMargin: '500px' });
   function fill() {
     const q = ui.q.trim().toLowerCase();
-    list = pool().filter((i) => !q || i.name.toLowerCase().includes(q));
+    list = (everywhere() ? catalog.items : pool()).filter((i) => !q || i.search.includes(q));
     const total = list.length;
     const works = picking() ? list.filter((i) => canSwap(ui.src, i)).length : total;
     if (picking() && ui.only) list = list.filter((i) => canSwap(ui.src, i) || i === ui.src);
-    list.sort((a, b) => (b.ok - a.ok) || a.name.localeCompare(b.name)); // items with a readable picture first
+    // best matches first when searching (name starts with the text), then items with a readable picture
+    const rank = (i) => (q && i.label.toLowerCase().startsWith(q) ? 0 : 1);
+    list.sort((a, b) => (rank(a) - rank(b)) || (b.ok - a.ok) || a.label.localeCompare(b.label));
     grid.replaceChildren();
     shown = 0;
     more();
-    count.textContent = picking() ? `${works} of ${total} looks work with ${ui.src.name}` : plural(total, 'item');
+    count.textContent = picking() ? `${works} of ${total} looks work with ${ui.src.label}` : everywhere() ? `${plural(total, 'item')} in all categories` : plural(total, 'item');
     only.replaceChildren(...(picking() ? [toggle(ui.only, (v) => { ui.only = v; fill(); }), 'Only looks that work'] : []));
   }
   garage = { paintBar, fill, mark, io };
@@ -439,7 +450,7 @@ views.garage = () => {
     icon(c.id, 17), h('span', { class: 'grow' }, c.label), h('small', {}, catalog.counts[c.id] || 0)))),
     tile('s9',
       h('div', { class: 'row wrap' }, h('label', { class: 'search' }, icon('search', 16),
-        field({ placeholder: `Search ${catalog.categories.find((c) => c.id === ui.cat).label.toLowerCase()}`, value: ui.q, oninput: (e) => { ui.q = e.target.value; fill(); } })),
+        field({ placeholder: 'Search all items by name', value: ui.q, oninput: (e) => { ui.q = e.target.value; fill(); } })),
       only, h('span', { class: 'grow' }), count),
       grid, sentinel));
   return root;
@@ -449,7 +460,12 @@ async function pickItem(item, which) {
   if (!item) return;
   ui[which] = item;
   ui.check = null;
-  if (which === 'src') { ui.slot = 'dst'; if (ui.dst && !canSwap(item, ui.dst)) ui.dst = null; }
+  if (which === 'src') {
+    ui.slot = 'dst';
+    if (ui.dst && (ui.dst.category !== item.category || !canSwap(item, ui.dst))) ui.dst = null;
+    // found through a search in another category: go there to choose its new look
+    if (item.category !== ui.cat || ui.q) { ui.cat = item.category; ui.q = ''; render(); return; }
+  }
   garage.paintBar();
   if (which === 'src') garage.fill(); else garage.mark();
   if (ui.src && ui.dst) {

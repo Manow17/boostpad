@@ -15,6 +15,7 @@ const { Engine } = require('../src/main/core/engine');
 const { Store } = require('../src/main/core/store');
 const { Maps, MAP_SLOT } = require('../src/main/core/library');
 const arenas = require('../src/main/core/arenas');
+const { readLabels, applyLabels } = require('../src/main/core/labels');
 
 const sha = (f) => crypto.createHash('sha1').update(fs.readFileSync(f)).digest('hex');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'boostpad-test-'));
@@ -265,6 +266,19 @@ function makeEngine(cooked, running = { value: false }) {
     assert.ok(pkg.names.length > 0);
     assert.strictEqual(upk.probeFile(path.join(cooked, shortF), wrong), true);
   }, !real);
+
+  test('item names: labels are applied, decals get their car, missing ones keep the internal name', () => {
+    const items = [
+      { file: 'skin_IndigoD_SF.upk', name: 'Indigo D', category: 'decals' },
+      { file: 'skin_grain_stripes_SF.upk', name: 'Grain Stripes', category: 'decals' },
+      { file: 'body_grain_SF.upk', name: 'Grain', category: 'cars' },
+      { file: 'boost_unknown_SF.upk', name: 'Unknown', category: 'boosts' },
+    ];
+    const named = applyLabels(items, new Map([['skin_indigod', 'Lunation'], ['skin_grain_stripes', 'Stripes'], ['body_grain', 'Fennec']]));
+    assert.strictEqual(named, 3);
+    assert.deepStrictEqual(items.map((i) => [i.label, i.sub]), [['Lunation', ''], ['Stripes', 'Fennec'], ['Fennec', ''], ['Unknown', '']]);
+    assert.strictEqual(readLabels(path.join(tmp, 'nowhere')).size, 0, 'a missing text file gives no labels, not an error');
+  });
 
   await runAll();
   fs.rmSync(tmp, { recursive: true, force: true });

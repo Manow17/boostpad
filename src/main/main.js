@@ -10,6 +10,7 @@ const mediaBridge = require('./media');
 const upk = require('./core/upk');
 const { Maps, MAP_SLOT } = require('./core/library');
 const arenas = require('./core/arenas');
+const { readLabels, applyLabels } = require('./core/labels');
 
 const DEFAULTS = {
   platform: null,
@@ -102,6 +103,9 @@ async function buildIndex() {
   }
   index.data = { dir, keys: keys.length, files };
   index.save();
+  // real item names, from the game's own text file
+  built.named = applyLabels(built.items, readLabels(dir, keys));
+  built.items.sort((a, b) => a.label.localeCompare(b.label));
   if (dir === cooked() && keys === extraKeys) catalog = built; // nothing changed while we worked
 }
 

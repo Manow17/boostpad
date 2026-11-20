@@ -23,7 +23,7 @@ No account, no subscription, no server. Everything runs on your PC, and every ga
 
 | Tab | What it does |
 | --- | --- |
-| **Garage** | Give an item you own the look of another item (cars, wheels, boosts, decals, toppers, antennas, engine sounds, trails, goal explosions, paint finishes, banners, borders, anthems). Items are shown with their real pictures, read from your own game files. Once you pick your item, only the looks that work with it are listed. Everything applied or queued is listed there with a Revert button. |
+| **Garage** | Give an item you own the look of another item (cars, wheels, boosts, decals, toppers, antennas, engine sounds, trails, goal explosions, paint finishes, banners, borders, anthems). Items are shown with their real names and pictures, read from your own game files, and the search looks through every category at once. Once you pick your item, only the looks that work with it are listed. Everything applied or queued is listed there with a Revert button. |
 | **Workshop Maps** | Load a training/challenge map into the Underpass slot and play it from Free Play. |
 | **Map Merge** | Mix the game's own arenas: put the stadium of one arena into the surroundings of another, and add snow where the game has something to do it with. Experimental. |
 | **Presets** | Save everything that is active and switch setups in one click. Unlimited. Copy a preset as a code to pass it on. |
@@ -62,7 +62,7 @@ Known limits of item swaps in this version:
 - A swap renames the new look's package to your item's name **in place**, so your item's internal name must not be longer than the new look's (for example Standard boost -> Alpha Reward works, Octane -> Venom does not). On the test machine about half the looks in a category work for a given item. The Garage lists only those once you have picked your item.
 - Boostpad ships one decryption key, the long-published community one, which opens roughly two thirds of items. The rest show a lock instead of a picture and cannot be used as a new look. If you have a key list (a `keys.txt`, one key per line in hex or base64, as published by community tools), add it under **Settings -> Item pictures and keys**; on the test machine that raised coverage to about 97%. Key lists are not included in this repository.
 - Other community tools that swap items the same way report that **car body and goal explosion swaps can crash the game**. Treat those two categories as the riskiest.
-- Items are listed under their internal file names, which sometimes differ from the shop names (some cars have code names). The pictures help; a proper name list is not done yet.
+- Item names come from the game's own English text file, which needs a key from a key list. With only the built-in key, items are listed under their internal file names (some cars have code names).
 
 Not implemented: custom paint colours, 3D garage preview, custom balls and sounds, stadium colours, and changing your name, title or rank **inside** the game. The last one would need code injected into the running game, which Boostpad does not do.
 
@@ -99,7 +99,7 @@ Each item is a package file such as `WHEEL_Star_SF.upk` whose contents answer to
 
 ```
 src/main/core/   game.js (find game)  upk.js (package reader/patcher)  engine.js (apply, back up, revert, queue)
-                 catalog.js (items)   thumbs.js (item pictures)        arenas.js (map merge, snow)
+                 catalog.js (items)   labels.js (item names)   thumbs.js (item pictures)   arenas.js (map merge, snow)
                  library.js (workshop maps)  store.js (settings)
 src/main/        main.js (window, IPC)  preload.js  media.js + media.ps1 (now playing, via Windows)
 src/renderer/    app.js, styles.css, pad.js (controller drawing), overlay + nowplaying (overlay windows)

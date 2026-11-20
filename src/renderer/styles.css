@@ -263,6 +263,7 @@ main { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-heigh
 .cell:active { transform: scale(.97); }
 .cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .cell .name { font-size: 12.5px; font-weight: 500; padding: 0 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell .sub { font-size: 11px; color: var(--muted); padding: 0 5px; margin-top: -6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cell.no { opacity: .32; }
 .cell.no:hover { opacity: .75; }
 .cell.src { border-color: var(--text); }
