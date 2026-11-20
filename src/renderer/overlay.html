@@ -5,7 +5,8 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
   <title>Boostpad overlay</title>
   <style>
-    html, body { margin: 0; background: transparent; overflow: hidden; font: 600 15px "Segoe UI", system-ui, sans-serif; color: #fff; }
+    @font-face { font-family: "Outfit"; src: url("../../assets/fonts/outfit.woff2") format("woff2"); font-weight: 100 900; }
+    html, body { margin: 0; background: transparent; overflow: hidden; font: 600 15px "Outfit", "Segoe UI", system-ui, sans-serif; color: #fff; }
     #root { transform-origin: top right; position: absolute; top: 0; right: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; padding: 8px; }
     #mmr { background: rgba(10, 12, 18, .72); border-radius: 10px; padding: 6px 14px; text-align: right; }
     #mmr b { font-size: 26px; display: block; line-height: 1.1; }

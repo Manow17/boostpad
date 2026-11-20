@@ -15,7 +15,7 @@ const DEFAULTS = {
   theme: { mode: 'dark' },
   presets: [],
   music: { files: [], volume: 0.6 },
-  profile: { name: '', title: '', titleColor: '#2dd4bf', glow: false, rank: '', avatar: '' },
+  profile: { name: '', title: '', titleColor: '#00d8c8', glow: false, rank: '', avatar: '' },
   tracker: { playlist: 'Doubles 2v2', entries: [] },
   overlay: { controller: false, mmr: false, style: 'light', size: 100, x: null, y: null },
   syncUrl: '',
@@ -30,10 +30,10 @@ if (arg('data')) app.setPath('userData', path.resolve(arg('data')));
 
 let win = null, overlay = null, settings, engine, maps, packs, catalog = null, running = false;
 
-const ACCENT = '#2dd4bf';
+const ACCENT = '#00d8c8';
 const ICON = path.join(__dirname, '..', '..', 'assets', 'icon.png');
 // Window colours per theme: page background and the colour of the minimise/maximise/close glyphs.
-const CHROME = { dark: { bg: '#0a0c0c', symbol: '#ecf0f0' }, light: { bg: '#e8eded', symbol: '#0c1717' } };
+const CHROME = { dark: { bg: '#0e0f12', symbol: '#f1f2f4' }, light: { bg: '#e7e8ec', symbol: '#17181c' } };
 const chrome = () => CHROME[settings.get('theme').mode] || CHROME.dark;
 const titleBar = () => ({ color: '#00000000', symbolColor: chrome().symbol, height: 60 });
 function applyChrome() {

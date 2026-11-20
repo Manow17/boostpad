@@ -29,7 +29,7 @@ const NAV = [
 const PACK_TYPES = [['all', 'All'], ['ball', 'Ball'], ['decal', 'Decals'], ['boostmeter', 'Boost meter'], ['wheels', 'Wheels'], ['menu', 'Lobby'], ['loading', 'Loading screen'], ['music', 'Menu music'], ['sound', 'Sounds'], ['other', 'Other']];
 const PLAYLISTS = ['Duel 1v1', 'Doubles 2v2', 'Standard 3v3', 'Hoops', 'Rumble', 'Dropshot', 'Snow Day', 'Tournament'];
 const RANKS = ['', 'Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Champion', 'Grand Champion', 'Supersonic Legend'];
-const COLORS = ['#2dd4bf', '#38bdf8', '#818cf8', '#c084fc', '#f472b6', '#fb7185', '#fb923c', '#facc15', '#a3e635'];
+const COLORS = ['#00d8c8', '#38bdf8', '#818cf8', '#c084fc', '#f472b6', '#fb7185', '#fb923c', '#facc15', '#a3e635'];
 
 // Line icons on a 24px grid (drawn for this project).
 const IC = {
@@ -103,12 +103,8 @@ function icon(name, size = 18) {
   return svg;
 }
 
-// The app mark. Same shapes as assets/icon.svg, coloured by the theme.
-function mark(size) {
-  const svg = svgEl('svg', { viewBox: '0 0 256 256', width: size, height: size, class: 'mark' });
-  svg.append(svgEl('rect', { x: 14, y: 14, width: 228, height: 228, rx: 64 }), svgEl('path', { d: 'M138.500 44L72 142h46l-9 70l75-106h-48z' }));
-  return svg;
-}
+// The app mark: the same picture as the window icon.
+const mark = (size) => h('img', { class: 'mark', src: '../../assets/icon.png', width: size, height: size, alt: '', draggable: 'false' });
 
 const bento = (...kids) => h('div', { class: 'bento' }, kids);
 const tile = (cls, ...kids) => h('section', { class: `tile ${cls}` }, kids);
@@ -270,7 +266,7 @@ function updateNav(nav) {
         list.append(h('button', { 'data-tab': id, onclick: go(id) }, icon(glyph), h('span', { class: 'grow' }, PAGES[id][0]), id === 'active' && h('span', { class: 'count', hidden: '' })));
       }
     });
-    nav.append(h('div', { class: 'brand' }, mark(28), 'BOOSTPAD'), list,
+    nav.append(h('div', { class: 'brand' }, mark(32), 'BOOSTPAD'), list,
       h('div', { class: 'gamestate' }, h('div', { class: 'row', style: 'gap:8px' }, h('span', { class: 'dot' }), h('b', {}, 'Rocket League')), h('span', { class: 'muted small' }), h('span', { class: 'muted small' }, `v${S.version} · open source`)));
   }
   const ind = nav.querySelector('.ind');
@@ -298,7 +294,7 @@ function setup() {
     else { toast(`No ${label} install found. Select the "rocketleague" folder.`, true); run(() => api('browseInstall', platform)); }
   } }, h('h3', {}, 'Launcher'), h('h2', {}, label), h('span', { class: 'muted small' }, 'Detect automatically'));
   return h('div', { class: 'setupwrap' }, bento(
-    tile('s12 hero', mark(64), h('h1', {}, 'Where do you play?'), h('p', { class: 'muted' }, 'Pick your launcher and Boostpad finds Rocket League for you.')),
+    tile('s12 hero ink', mark(72), h('h1', {}, 'Where do you play?'), h('p', { class: 'muted' }, 'Pick your launcher and Boostpad finds Rocket League for you.')),
     choose('steam', 'Steam'), choose('epic', 'Epic Games'),
     noteTile('info', 's12', 'Boostpad only changes files on your own PC and backs up every file it touches. It is a fan project, not affiliated with Psyonix or Epic Games.')));
 }
@@ -375,7 +371,7 @@ views.garage = () => {
     else status = h('span', { class: 'tag on' }, 'Ready');
     bar.replaceChildren(
       pick('src', 'Your item', ui.src, 'Pick an item you own'),
-      h('div', { class: 'tile mid' },
+      h('div', { class: 'tile mid ink' },
         h('button', { class: 'btn primary lg', disabled: !ready || !S.settings.experimentalSwaps, onclick: () => run(() => api('apply', op()), queuedMsg) }, S.running ? 'Queue swap' : 'Swap'),
         h('div', { class: 'status' }, status),
         h('div', { class: 'row' },
@@ -494,7 +490,7 @@ views.maps = () => {
   const root = bento(
     tile('s8', head('Your maps', btnIcon('primary sm', 'plus', 'Add map files', add)),
       h('p', { class: 'muted' }, 'Add the .upk or .udk map files you have downloaded, then load one.')),
-    tile('s4 accent', h('h3', {}, 'How to play'), h('p', {}, 'A loaded map takes the place of the Underpass arena. Open Training → Free Play and choose Underpass.')));
+    tile('s4 ink', h('h3', {}, 'How to play'), h('p', {}, 'A loaded map takes the place of the Underpass arena. Open Training → Free Play and choose Underpass.')));
   if (!maps) { load('maps'); return root; }
   const slot = S.mapSlot.toLowerCase();
   const loaded = S.engine.active.find((r) => r.key === slot);
@@ -558,7 +554,7 @@ views.active = () => {
   const { active, queue } = S.engine;
   if (!catalog && active.some((r) => r.op.kind === 'swap')) ensureCatalog(); // for the pictures
   return bento(
-    tile('s4', head('In your game'), h('div', { class: 'big hero' }, active.length), h('p', { class: 'muted' }, active.length ? `${plural(active.length, 'file')} changed. Originals are backed up.` : 'Your game files are original.'),
+    tile('s4 ink', head('In your game'), h('div', { class: 'big hero' }, active.length), h('p', { class: 'muted' }, active.length ? `${plural(active.length, 'file')} changed. Originals are backed up.` : 'Your game files are original.'),
       h('button', { class: 'btn danger push', disabled: !active.length, onclick: () => run(() => api('revertAll'), 'Everything reverted.') }, 'Revert all')),
     tile('s8', head('Waiting for Rocket League to close', h('span', { class: 'tag' }, queue.length)),
       queue.length ? h('div', { class: 'list' }, queue.map((q) => h('div', { class: 'item' },
@@ -595,9 +591,9 @@ views.tracker = () => {
     chart.append(svg);
   } else chart.append(h('p', { class: 'muted' }, 'Log at least two ratings to see your trend.'));
   return bento(
-    tile('s5 r2 accent', head('Current', select(PLAYLISTS.map((p) => [p, p]), t.playlist, (p) => set('tracker', { ...t, playlist: p }), 170)),
+    tile('s5 r2 ink', head('Current', select(PLAYLISTS.map((p) => [p, p]), t.playlist, (p) => set('tracker', { ...t, playlist: p }), 170)),
       h('div', { class: 'big hero push' }, last ? last.mmr : '—'), h('p', { class: 'muted' }, last ? `Last logged ${new Date(last.at).toLocaleString()}` : 'Nothing logged for this playlist yet.')),
-    stat('s3', 'Today', last ? `${delta >= 0 ? '+' : ''}${delta}` : '—', last && (delta < 0 ? 'var(--bad)' : 'var(--accent)')),
+    stat('s3', 'Today', last ? `${delta >= 0 ? '+' : ''}${delta}` : '—', last && (delta < 0 ? 'var(--bad)' : 'var(--accent-text)')),
     stat('s2', 'Peak', last ? Math.max(...mine.map((e) => e.mmr)) : '—'),
     stat('s2', 'Logged', mine.length),
     tile('s7', head('Log a match', h('button', { class: 'btn sm danger', disabled: !last, onclick: () => set('tracker', { ...t, entries: t.entries.filter((e) => e !== last) }) }, 'Undo last')),
@@ -609,7 +605,7 @@ views.tracker = () => {
 views.overlay = () => {
   const o = S.settings.overlay, upd = (patch) => set('overlay', { ...o, ...patch });
   const feature = (glyph, name, text, on, key) => tile(`s6${on ? ' accent' : ''}`,
-    h('div', { class: 'row' }, h('span', { class: 'art lg', style: 'background:var(--tile-2);color:var(--accent)' }, icon(glyph, 30)), h('span', { class: 'grow' }), toggle(on, (v) => upd({ [key]: v }))),
+    h('div', { class: 'row' }, h('span', { class: 'art lg', style: 'background:var(--tile-2);color:var(--accent-text)' }, icon(glyph, 30)), h('span', { class: 'grow' }), toggle(on, (v) => upd({ [key]: v }))),
     h('div', { class: 'push' }, h('h2', {}, name), h('p', { class: 'muted' }, text)));
   return bento(
     feature('overlay', 'Controller', 'Every button, stick and trigger you press, live.', o.controller, 'controller'),
