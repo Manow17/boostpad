@@ -11,10 +11,10 @@ const DEFAULTS = {
   platform: null,
   installDir: null,
   experimentalSwaps: false,
-  theme: { accent: '#ff7a1a', background: 'ink' },
+  theme: { mode: 'dark' },
   presets: [],
   music: { files: [], volume: 0.6 },
-  profile: { name: '', title: '', titleColor: '#ffd166', glow: false, rank: '', avatar: '' },
+  profile: { name: '', title: '', titleColor: '#2dd4bf', glow: false, rank: '', avatar: '' },
   tracker: { playlist: 'Doubles 2v2', entries: [] },
   overlay: { controller: false, mmr: false, style: 'light', size: 100, x: null, y: null },
   syncUrl: '',
@@ -28,6 +28,18 @@ const smokeShot = arg('smoke'); // --smoke=<png path>: render once, save a scree
 if (arg('data')) app.setPath('userData', path.resolve(arg('data')));
 
 let win = null, overlay = null, settings, engine, maps, packs, catalog = null, running = false;
+
+const ACCENT = '#2dd4bf';
+const ICON = path.join(__dirname, '..', '..', 'assets', 'icon.png');
+// Window colours per theme: page background and the colour of the minimise/maximise/close glyphs.
+const CHROME = { dark: { bg: '#0a0c0c', symbol: '#ecf0f0' }, light: { bg: '#e8eded', symbol: '#0c1717' } };
+const chrome = () => CHROME[settings.get('theme').mode] || CHROME.dark;
+const titleBar = () => ({ color: '#00000000', symbolColor: chrome().symbol, height: 60 });
+function applyChrome() {
+  if (!win || win.isDestroyed()) return;
+  win.setBackgroundColor(chrome().bg);
+  win.setTitleBarOverlay(titleBar());
+}
 
 const cooked = () => (settings.get('installDir') ? game.cookedDir(settings.get('installDir')) : null);
 const send = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
@@ -57,7 +69,7 @@ function setOverlay() {
     const area = screen.getPrimaryDisplay().workArea;
     overlay = new BrowserWindow({
       width: 420, height: 300, x: cfg.x ?? area.x + area.width - 440, y: cfg.y ?? area.y + 20,
-      frame: false, transparent: true, resizable: false, skipTaskbar: true, focusable: false, show: false,
+      frame: false, transparent: true, resizable: false, skipTaskbar: true, focusable: false, show: false, icon: ICON,
       webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false },
     });
     overlay.setAlwaysOnTop(true, 'screen-saver');
@@ -73,7 +85,7 @@ function setOverlay() {
 function overlayPayload() {
   const t = settings.get('tracker');
   const last = t.entries.filter((e) => e.playlist === t.playlist).at(-1);
-  return { ...settings.get('overlay'), accent: settings.get('theme').accent, mmr: settings.get('overlay').mmr ? (last?.mmr ?? null) : null, playlist: t.playlist };
+  return { ...settings.get('overlay'), accent: ACCENT, mmr: settings.get('overlay').mmr ? (last?.mmr ?? null) : null, playlist: t.playlist };
 }
 
 // Everything the UI can ask for. Each method returns plain JSON.
@@ -95,7 +107,8 @@ const api = {
   setSetting(key, value) {
     if (!(key in DEFAULTS)) throw new Error(`Unknown setting ${key}`);
     settings.set(key, value);
-    if (key === 'overlay' || key === 'tracker' || key === 'theme') setOverlay();
+    if (key === 'overlay' || key === 'tracker') setOverlay();
+    if (key === 'theme') applyChrome();
     return snapshot();
   },
 
@@ -207,6 +220,8 @@ async function poll() {
   send('state', { state: snapshot(), flushed });
 }
 
+app.setAppUserModelId('io.github.boostpad'); // own taskbar identity and icon on Windows
+
 app.whenReady().then(async () => {
   const data = app.getPath('userData');
   settings = new Store(path.join(data, 'settings.json'), DEFAULTS);
@@ -227,11 +242,12 @@ app.whenReady().then(async () => {
   });
 
   win = new BrowserWindow({
-    width: 1320, height: 840, minWidth: 1000, minHeight: 660, backgroundColor: '#080a10', show: !smokeShot,
-    autoHideMenuBar: true, title: 'Boostpad',
+    width: 1320, height: 840, minWidth: 1000, minHeight: 660, backgroundColor: chrome().bg, show: !smokeShot,
+    autoHideMenuBar: true, title: 'Boostpad', icon: ICON,
     // custom title bar: the page draws the bar, Windows draws only the three buttons
-    titleBarStyle: 'hidden', titleBarOverlay: { color: '#00000000', symbolColor: '#eef1f7', height: 40 },
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true },
+    titleBarStyle: 'hidden', titleBarOverlay: titleBar(),
+    // test runs render offscreen, which keeps animations running so the screenshot is truthful
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, offscreen: !!smokeShot },
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());

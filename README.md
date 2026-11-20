@@ -6,7 +6,9 @@ No account, no subscription, no central server. Everything runs on your PC, and 
 
 > **Status: early (v0.1).** The app, the backup engine, workshop maps, mod packs, presets, tracker, overlay and profile cards work. **Item swaps are experimental and have not been confirmed in game yet** — see [What works](#what-works) before you rely on them.
 
-![Boostpad Garage](docs/garage.png)
+| Dark | Light |
+| --- | --- |
+| ![Garage, dark theme](docs/garage.png) | ![MMR Tracker, light theme](docs/tracker-light.png) |
 
 ## Read this first
 
@@ -29,7 +31,7 @@ No account, no subscription, no central server. Everything runs on your PC, and 
 | **Overlay** | Always-on-top controller input display and MMR counter, resizable. |
 | **Music** | Built-in player for your own audio files. |
 | **Profile** | A profile card with any name, title, colour, glow, rank badge and picture, shareable with other Boostpad users. |
-| **Themes** | Accent colour and background. |
+| **Themes** | Dark or light, both with a turquoise accent. Switch from the top bar or Settings. |
 
 ## What works
 
@@ -105,6 +107,7 @@ src/main/core/   game.js (find game)  upk.js (package reader/patcher)  engine.js
                  catalog.js (items)   library.js (maps, packs)         store.js (settings)
 src/main/        main.js (window, IPC)  preload.js
 src/renderer/    app.js, styles.css, overlay
+assets/          app icon (icon.svg, rendered to icon.png with `npm run icon`)
 server/          optional sync server
 test/            core tests
 ```
