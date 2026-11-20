@@ -21,7 +21,7 @@ No account, no subscription, no central server. Everything runs on your PC, and 
 
 | Tab | What it does |
 | --- | --- |
-| **Garage** | Give an item you own the look of another item (cars, wheels, boosts, decals, toppers, antennas, engine sounds, trails, goal explosions, paint finishes, banners, borders, anthems). Random pick included. |
+| **Garage** | Give an item you own the look of another item (cars, wheels, boosts, decals, toppers, antennas, engine sounds, trails, goal explosions, paint finishes, banners, borders, anthems). Items are shown with their real pictures, read from your own game files. Once you pick your item, only the looks that work with it are listed. Random pick included. |
 | **Mod Packs** | Apply community packs: custom balls, decals, boost meters, wheels, lobby backgrounds, loading screens, menu music, sounds. |
 | **Workshop Maps** | Load a training/challenge map into the Underpass slot and play it from Free Play. |
 | **Presets** | Save everything that is active and switch setups in one click. Unlimited. Share as a code or through a sync server. |
@@ -39,16 +39,17 @@ No account, no subscription, no central server. Everything runs on your PC, and 
 | --- | --- |
 | Finding the game (Epic, Steam), running check, Play button | Tested on an Epic install |
 | Backup, restore, queue, game-update detection | Covered by automated tests on copies of real game files |
-| Item catalog | Built from your own install (about 8,600 items on the test machine) |
+| Item catalog and pictures | Built from your own install (about 8,600 items on the test machine). Pictures are decoded from the game's thumbnail packages and cached; roughly two thirds of items have a readable one |
 | Item swaps | **Experimental.** The package rewrite is tested structurally (see below) but nobody has yet confirmed the result in game |
 | Workshop maps, mod packs | File replacement is tested; whether a given map or pack loads depends on the file |
 | Tracker, overlay, music, profile, sync server | Working; the overlay has not been tested over the game with a controller |
 
 Known limits of item swaps in this version:
 
-- A swap renames the new look's package to your item's name **in place**, so your item's internal name must not be longer than the new look's (for example Standard boost → Alpha Reward works, Octane → Venom does not). The app tells you when a pair cannot be done.
-- Only packages encrypted with the long-published community key can be read (roughly two thirds of items on the test machine). Newer packages use keys Boostpad does not have and does not try to obtain.
-- Items are listed under their internal file names, which sometimes differ from the shop names, and tiles have no thumbnails yet.
+- **The game must be closed.** If Rocket League is open the swap is queued and applied when you close it; you see it the next time you start the game.
+- A swap renames the new look's package to your item's name **in place**, so your item's internal name must not be longer than the new look's (for example Standard boost -> Alpha Reward works, Octane -> Venom does not). On the test machine about half the looks in a category work for a given item. The Garage lists only those once you have picked your item.
+- Only packages encrypted with the long-published community key can be read (roughly two thirds of items on the test machine). Newer packages use keys Boostpad does not have and does not try to obtain, so those items cannot be used as a new look and show an icon instead of a picture.
+- Items are listed under their internal file names, which sometimes differ from the shop names (some cars have code names). The pictures help; a proper name list is not done yet.
 
 Not implemented: custom paint colours, 3D garage preview, converting your own MP3s into game sounds, stadium colours, and changing your name, title or rank **inside** the game. The last one would need code injected into the running game, which Boostpad does not do.
 
@@ -104,7 +105,7 @@ Each item is a package file such as `WHEEL_Star_SF.upk` whose contents answer to
 
 ```
 src/main/core/   game.js (find game)  upk.js (package reader/patcher)  engine.js (apply, back up, revert, queue)
-                 catalog.js (items)   library.js (maps, packs)         store.js (settings)
+                 catalog.js (items)   thumbs.js (item pictures)        library.js (maps, packs)  store.js (settings)
 src/main/        main.js (window, IPC)  preload.js
 src/renderer/    app.js, styles.css, overlay
 assets/          app icon (icon.svg, rendered to icon.png with `npm run icon`)
@@ -118,4 +119,4 @@ Reports of what does and does not load in game are the most useful thing right n
 
 ## License
 
-MIT. Rocket League is a trademark of Psyonix LLC. This repository contains no game assets.
+MIT. Rocket League is a trademark of Psyonix LLC. This repository contains no game files; the screenshots show item pictures as the app displays them from your own install.

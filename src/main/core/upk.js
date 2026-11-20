@@ -8,6 +8,7 @@
 // file moves and the compressed object data is never rewritten.
 const fs = require('fs');
 const crypto = require('crypto');
+const zlib = require('zlib');
 
 const TAG = 0x9e2a83c1;
 // Publicly documented package key used by community tools. More can be supplied.
@@ -137,9 +138,95 @@ function renameNames(buf, renames, extraKeys = []) {
   return { buffer: out, renamed, missing };
 }
 
+// Cheap check: can this package be read with the keys we have? Reads only the
+// summary and the first two cipher blocks, so thousands of files can be checked.
+function probeFile(file, extraKeys = []) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const head = Buffer.alloc(16384);
+    const summary = parseSummary(head.subarray(0, fs.readSync(fd, head, 0, head.length, 0)));
+    const block = Buffer.alloc(32);
+    if (fs.readSync(fd, block, 0, 32, summary.nameOffset) < 32) return false;
+    return [...DEFAULT_KEYS, ...extraKeys].some((hex) => {
+      const plain = aes('dec', Buffer.from(hex, 'hex'), block);
+      const len = plain.readInt32LE(0); // first name-table entry: length, then text
+      if (len < 2 || len > 1024) return false;
+      const text = plain.subarray(4, Math.min(32, 4 + len - 1));
+      return text.every((c) => c >= 0x20 && c < 0x7f) && (4 + len > 32 || plain[4 + len - 1] === 0);
+    });
+  } catch { return false; } finally { if (fd !== undefined) fs.closeSync(fd); }
+}
+
+// ----- read-only access to objects (used for thumbnails) -----
+
+// Import/export tables and the list of compressed chunks.
+function readTables(buf, extraKeys = []) {
+  const pkg = readPackage(buf, extraKeys);
+  const { summary: s, plain } = pkg;
+  const names = pkg.names.map((n) => n.text);
+  const imports = [];
+  let p = s.importOffset - s.nameOffset;
+  for (let i = 0; i < s.importCount; i++, p += 28) imports.push(names[plain.readInt32LE(p + 20)]);
+  const exports = [];
+  p = s.exportOffset - s.nameOffset;
+  for (let i = 0; i < s.exportCount; i++) {
+    const cls = plain.readInt32LE(p), number = plain.readInt32LE(p + 16);
+    exports.push({
+      cls: cls < 0 ? imports[-cls - 1] : (cls > 0 ? '' : 'Class'),
+      name: names[plain.readInt32LE(p + 12)] + (number ? `_${number - 1}` : ''),
+      size: plain.readInt32LE(p + 32),
+      offset: Number(plain.readBigInt64LE(p + 36)),
+    });
+    p += 72 + plain.readInt32LE(p + 48) * 4;
+  }
+  const chunks = [];
+  p = s.chunkInfoOffset; // relative to the start of the decrypted block
+  const count = plain.readInt32LE(p);
+  p += 4;
+  for (let i = 0; i < count; i++, p += 24) {
+    chunks.push({ uoff: Number(plain.readBigInt64LE(p)), usize: plain.readInt32LE(p + 8), coff: Number(plain.readBigInt64LE(p + 12)), csize: plain.readInt32LE(p + 20) });
+  }
+  return { names, exports, chunks };
+}
+
+// One compressed chunk: tag, block size, sizes, a table of blocks, then zlib blocks.
+function inflateChunk(buf, at) {
+  if (buf.readUInt32LE(at) !== TAG) throw new UpkError('BAD_CHUNK', 'Compressed chunk has no tag');
+  const blockSize = buf.readInt32LE(at + 4), total = buf.readInt32LE(at + 12);
+  const blocks = Math.ceil(total / blockSize);
+  let table = at + 16, data = table + blocks * 8;
+  const out = [];
+  for (let i = 0; i < blocks; i++, table += 8) {
+    const size = buf.readInt32LE(table);
+    out.push(zlib.inflateSync(buf.subarray(data, data + size)));
+    data += size;
+  }
+  return Buffer.concat(out);
+}
+
+// The serialized bytes of one export, taken from the chunks that hold it.
+function readObject(buf, tables, exp) {
+  const parts = [];
+  let at = exp.offset, left = exp.size;
+  while (left > 0) {
+    const chunk = tables.chunks.find((c) => at >= c.uoff && at < c.uoff + c.usize);
+    if (!chunk) throw new UpkError('BAD_OFFSET', `Object "${exp.name}" is outside the package data`);
+    chunk.data ??= inflateChunk(buf, chunk.coff);
+    const part = chunk.data.subarray(at - chunk.uoff, at - chunk.uoff + left);
+    parts.push(part);
+    at += part.length;
+    left -= part.length;
+  }
+  return parts.length === 1 ? parts[0] : Buffer.concat(parts);
+}
+
 // "WHEEL_Star_SF.upk" -> "WHEEL_Star"
 function baseName(fileName) {
   return fileName.replace(/\.upk$/i, '').replace(/_SF$/i, '');
 }
 
-module.exports = { UpkError, DEFAULT_KEYS, parseSummary, readPackage, readPackageFile, renameNames, baseName };
+module.exports = {
+  UpkError, DEFAULT_KEYS, parseSummary, readPackage, readPackageFile, renameNames, baseName,
+  probeFile, readTables, inflateChunk, readObject,
+};

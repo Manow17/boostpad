@@ -4,7 +4,7 @@ const api = (method, ...args) => window.boostpad.call(method, ...args);
 
 let S = null;          // latest snapshot from the main process
 let catalog = null;    // item catalog, loaded on first use
-const ui = { tab: location.hash.slice(1) || 'garage', cat: 'cars', q: '', slot: 'src', src: null, dst: null, check: null, packType: 'all' };
+const ui = { tab: location.hash.slice(1) || 'garage', cat: 'cars', q: '', slot: 'src', src: null, dst: null, check: null, only: true, packType: 'all' };
 const player = new Audio();
 let track = -1;
 
@@ -309,12 +309,36 @@ async function ensureCatalog() {
   if (catalog) return;
   catalog = await api('getCatalog');
   catalog.counts = {};
-  for (const i of catalog.items) catalog.counts[i.category] = (catalog.counts[i.category] || 0) + 1;
-  if (ui.tab === 'garage') render(true);
+  catalog.byId = new Map();
+  for (const i of catalog.items) { catalog.counts[i.category] = (catalog.counts[i.category] || 0) + 1; catalog.byId.set(i.id, i); }
+  if (ui.tab === 'garage' || ui.tab === 'active') render(ui.tab === 'garage');
 }
+
+// The item's real picture, read from the game's own files (thumb://, see main.js).
+// Items whose package cannot be read fall back to their category icon.
+function picture(item, glyph, cls = '') {
+  const box = h('span', { class: `pic ${cls}` });
+  const fallback = () => { box.classList.add('none'); box.replaceChildren(icon(glyphFor(glyph), cls.includes('sm') ? 18 : 26)); };
+  if (!item || !item.thumb) { fallback(); return box; }
+  const img = h('img', { alt: '', loading: 'lazy', decoding: 'async', draggable: 'false', src: `thumb://item/${encodeURIComponent(item.thumb)}` });
+  img.addEventListener('load', () => img.classList.add('in'));
+  img.addEventListener('error', fallback);
+  box.append(img);
+  if (img.complete && img.naturalWidth) img.classList.add('in');
+  return box;
+}
+
+// Can the item you own take this look? Mirrors canSwap() in core/catalog.js.
+const canSwap = (source, target) => source.id !== target.id && target.ok && source.len <= target.len;
+const whyNot = (source, target) => {
+  if (!target.ok) return 'This look uses a newer package key that Boostpad cannot read.';
+  if (source.len > target.len) return 'Not supported yet: this look has a shorter internal name than your item.';
+  return 'Pick two different items.';
+};
 
 const views = {};
 let popGrid = false; // animate the item grid on the next render (category change)
+let garage = null;   // handles of the mounted Garage page, so a pick does not rebuild it
 
 views.garage = () => {
   const root = bento();
@@ -324,69 +348,113 @@ views.garage = () => {
   }
   if (!catalog) { ensureCatalog(); root.append(tile('s12', empty('cars', 'Reading your game files', 'Building the item list from your own install.'))); return root; }
 
-  const slot = (which, label, item, hint) => h('button', { class: `slot${ui.slot === which ? ' on' : ''}`, onclick: () => { ui.slot = which; render(); } },
-    item ? art(item.name, ui.cat) : h('span', { class: 'art blank' }, which === 'src' ? '1' : '2'),
-    h('span', { class: 'col grow', style: 'gap:2px' }, h('h3', {}, label), item ? h('span', { class: 'name clip' }, item.name) : h('span', { class: 'muted' }, hint)));
-
-  const op = () => ({ kind: 'swap', sourceFile: ui.src.file, targetFile: ui.dst.file, category: ui.cat, label: `${ui.src.name} → ${ui.dst.name}` });
-  const reasons = {
-    NAME_TOO_LONG: 'Not supported yet: your item has a longer internal name than the new look. Try another pair.',
-    NO_KEY: 'This item uses a newer package key that Boostpad cannot read.',
-    SAME_ITEM: 'Pick two different items.',
-  };
-  const status = !ui.src || !ui.dst ? h('span', { class: 'muted' }, 'Pick both items to continue')
-    : !ui.check ? h('span', { class: 'muted' }, 'Checking…')
-      : ui.check.ok ? h('span', { class: 'tag on' }, 'Ready to swap')
-        : h('span', { style: 'color:var(--bad)' }, reasons[ui.check.code] || ui.check.message);
   const pool = () => catalog.items.filter((i) => i.category === ui.cat);
-
-  const panel = tile('s4 sticky',
-    head('Your swap', h('span', { class: 'tag' }, 'Experimental')),
-    h('div', { class: 'col', style: 'gap:0' },
-      slot('src', 'Your item', ui.src, 'Pick an item you own'),
-      h('span', { class: 'link' }, icon('down', 15)),
-      slot('dst', 'New look', ui.dst, 'Then pick its new look')),
-    h('div', { class: 'status' }, status),
-    h('button', { class: 'btn primary lg', disabled: !(ui.check && ui.check.ok) || !S.settings.experimentalSwaps, onclick: () => run(() => api('apply', op()), queuedMsg) }, 'Swap'),
-    h('div', { class: 'row' },
-      h('button', { class: 'btn sm grow', disabled: !ui.src, onclick: () => { const p = pool(); pickItem(p[Math.floor(Math.random() * p.length)], 'dst'); } }, 'Random look'),
-      h('button', { class: 'btn sm grow', onclick: () => { ui.src = ui.dst = ui.check = null; ui.slot = 'src'; render(); } }, 'Clear')),
-    h('p', { class: 'muted small' }, 'The original file is backed up first. Revert any time from Active.'));
-
-  const grid = h('div', { class: `grid${popGrid ? ' pop' : ''}` }), count = h('span', { class: 'muted small' });
+  const op = () => ({ kind: 'swap', sourceFile: ui.src.file, targetFile: ui.dst.file, category: ui.cat, label: `${ui.src.name} → ${ui.dst.name}` });
+  const bar = h('section', { class: 'swapbar' });
+  const grid = h('div', { class: `grid${popGrid ? ' pop' : ''}` });
+  const count = h('span', { class: 'muted small' });
+  const only = h('label', { class: 'row small muted' });
   popGrid = false;
+
+  function paintBar() {
+    const pick = (which, label, item, hint) => h('button', { class: `pick${ui.slot === which ? ' on' : ''}`, onclick: () => { ui.slot = which; paintBar(); fill(); } },
+      item ? picture(item, ui.cat, 'lg') : h('span', { class: 'pic lg blank' }, which === 'src' ? '1' : '2'),
+      h('span', { class: 'col grow', style: 'gap:4px' }, h('h3', {}, label),
+        item ? h('span', { class: 'name clip' }, item.name) : h('span', { class: 'muted' }, hint),
+        item && h('span', { class: 'muted small clip' }, item.file)));
+    const ready = ui.check && ui.check.ok;
+    const queued = ui.src && S.engine.queue.some((q) => q.key === ui.src.id);
+    const applied = ui.src && S.engine.active.some((r) => r.key === ui.src.id);
+    let status;
+    if (!ui.src) status = h('span', { class: 'muted' }, 'Start with an item you own');
+    else if (queued) status = h('span', { class: 'tag on' }, 'Queued: close Rocket League to apply');
+    else if (!ui.dst) status = h('span', { class: 'muted' }, applied ? 'This item is swapped. Pick a look to change it.' : 'Now pick its new look');
+    else if (!ui.check) status = h('span', { class: 'muted' }, 'Checking…');
+    else if (!ready) status = h('span', { style: 'color:var(--bad)' }, ['NAME_TOO_LONG', 'NO_KEY'].includes(ui.check.code) ? whyNot(ui.src, ui.dst) : ui.check.message);
+    else if (S.running) status = h('span', { class: 'muted' }, 'Rocket League is open. The swap waits until you close it.');
+    else status = h('span', { class: 'tag on' }, 'Ready');
+    bar.replaceChildren(
+      pick('src', 'Your item', ui.src, 'Pick an item you own'),
+      h('div', { class: 'tile mid' },
+        h('button', { class: 'btn primary lg', disabled: !ready || !S.settings.experimentalSwaps, onclick: () => run(() => api('apply', op()), queuedMsg) }, S.running ? 'Queue swap' : 'Swap'),
+        h('div', { class: 'status' }, status),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn sm grow', disabled: !ui.src, onclick: () => { const p = pool().filter((i) => canSwap(ui.src, i)); pickItem(p[Math.floor(Math.random() * p.length)], 'dst'); } }, 'Random'),
+          h('button', { class: 'btn sm grow', onclick: () => { ui.src = ui.dst = ui.check = null; ui.slot = 'src'; paintBar(); fill(); } }, 'Clear'))),
+      pick('dst', 'New look', ui.dst, 'Then pick its new look'));
+    requestAnimationFrame(() => root.style.setProperty('--bar', `${bar.offsetHeight}px`));
+  }
+
+  function cell(i, n, blocked) {
+    return h('button', { class: `cell${blocked ? ' no' : ''}`, 'data-id': i.id, style: n < 24 && `--i:${n}`, 'aria-label': i.name, onclick: () => pickItem(i, ui.slot) },
+      picture(i, ui.cat), h('span', { class: 'name' }, i.name));
+  }
+  function mark() { // show which cells are picked, without rebuilding them
+    for (const el of grid.children) {
+      const isSrc = !!ui.src && ui.src.id === el.dataset.id, isDst = !!ui.dst && ui.dst.id === el.dataset.id;
+      el.classList.toggle('src', isSrc);
+      el.classList.toggle('dst', isDst);
+      const badge = el.querySelector('.badge');
+      if (badge) badge.remove();
+      if (isSrc || isDst) el.append(h('span', { class: 'badge' }, isSrc ? 'YOURS' : 'NEW'));
+    }
+  }
+  // The list is added to the page a batch at a time as you scroll.
+  const BATCH = 96;
+  const sentinel = h('div', { style: 'height:1px' });
+  let list = [], shown = 0;
+  const picking = () => ui.slot === 'dst' && ui.src; // choosing a look for a known item
+  function more() {
+    if (shown >= list.length) return;
+    const blocked = (i) => !!picking() && i !== ui.src && !canSwap(ui.src, i);
+    grid.append(...list.slice(shown, shown + BATCH).map((i, n) => cell(i, shown + n, blocked(i))));
+    shown = Math.min(shown + BATCH, list.length);
+    mark();
+    io.unobserve(sentinel); // re-arm: fires again if the end of the list is still in view
+    if (shown < list.length) io.observe(sentinel);
+  }
+  if (garage) garage.io.disconnect();
+  const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) more(); }, { root: document.getElementById('view'), rootMargin: '500px' });
   function fill() {
     const q = ui.q.trim().toLowerCase();
-    const list = pool().filter((i) => !q || i.name.toLowerCase().includes(q));
-    grid.replaceChildren(...list.slice(0, 240).map((i, n) => h('button', {
-      class: `cell${ui.src === i ? ' src' : ''}${ui.dst === i ? ' dst' : ''}`, style: n < 24 && `--i:${n}`, onclick: () => pickItem(i, ui.slot),
-    }, art(i.name, ui.cat), h('span', { class: 'name' }, i.name),
-    ui.src === i ? h('span', { class: 'badge' }, 'YOURS') : ui.dst === i ? h('span', { class: 'badge' }, 'NEW') : null)));
-    count.textContent = list.length > 240 ? `Showing 240 of ${list.length}. Search to narrow it down.` : plural(list.length, 'item');
+    list = pool().filter((i) => !q || i.name.toLowerCase().includes(q));
+    const total = list.length;
+    const works = picking() ? list.filter((i) => canSwap(ui.src, i)).length : total;
+    if (picking() && ui.only) list = list.filter((i) => canSwap(ui.src, i) || i === ui.src);
+    list.sort((a, b) => (b.ok - a.ok) || a.name.localeCompare(b.name)); // items with a readable picture first
+    grid.replaceChildren();
+    shown = 0;
+    more();
+    count.textContent = picking() ? `${works} of ${total} looks work with ${ui.src.name}` : plural(total, 'item');
+    only.replaceChildren(...(picking() ? [toggle(ui.only, (v) => { ui.only = v; fill(); }), 'Only looks that work'] : []));
   }
+  garage = { paintBar, fill, mark, io };
+  paintBar();
   fill();
 
-  root.append(h('div', { class: 'col s8', style: 'gap:10px' },
-    tile('',
-      h('div', { class: 'chips' }, catalog.categories.map((c) => h('button', { class: `chip${ui.cat === c.id ? ' on' : ''}`,
-        onclick: () => { ui.cat = c.id; ui.q = ''; ui.src = ui.dst = ui.check = null; ui.slot = 'src'; popGrid = true; render(); } }, icon(c.id, 15), c.label, h('small', {}, catalog.counts[c.id] || 0)))),
-      h('div', { class: 'row' }, h('label', { class: 'search' }, icon('search', 16),
-        field({ placeholder: 'Search items', value: ui.q, oninput: (e) => { ui.q = e.target.value; fill(); } })), h('span', { class: 'grow' }), count)),
-    tile('', grid)),
-  panel);
+  root.append(bar,
+    tile('s3 rail', catalog.categories.map((c) => h('button', { class: ui.cat === c.id ? 'on' : '',
+      onclick: () => { ui.cat = c.id; ui.q = ''; ui.src = ui.dst = ui.check = null; ui.slot = 'src'; popGrid = true; render(); } },
+    icon(c.id, 17), h('span', { class: 'grow' }, c.label), h('small', {}, catalog.counts[c.id] || 0)))),
+    tile('s9',
+      h('div', { class: 'row wrap' }, h('label', { class: 'search' }, icon('search', 16),
+        field({ placeholder: `Search ${catalog.categories.find((c) => c.id === ui.cat).label.toLowerCase()}`, value: ui.q, oninput: (e) => { ui.q = e.target.value; fill(); } })),
+      only, h('span', { class: 'grow' }), count),
+      grid, sentinel));
   return root;
 };
 
 async function pickItem(item, which) {
   if (!item) return;
   ui[which] = item;
-  if (which === 'src') ui.slot = 'dst';
   ui.check = null;
-  render();
+  if (which === 'src') { ui.slot = 'dst'; if (ui.dst && !canSwap(item, ui.dst)) ui.dst = null; }
+  garage.paintBar();
+  if (which === 'src') garage.fill(); else garage.mark();
   if (ui.src && ui.dst) {
     const { src, dst } = ui;
     const check = await api('checkSwap', { kind: 'swap', sourceFile: src.file, targetFile: dst.file });
-    if (ui.src === src && ui.dst === dst) { ui.check = check; render(); }
+    if (ui.src === src && ui.dst === dst) { ui.check = check; garage.paintBar(); }
   }
 }
 
@@ -488,6 +556,7 @@ views.presets = () => {
 
 views.active = () => {
   const { active, queue } = S.engine;
+  if (!catalog && active.some((r) => r.op.kind === 'swap')) ensureCatalog(); // for the pictures
   return bento(
     tile('s4', head('In your game'), h('div', { class: 'big hero' }, active.length), h('p', { class: 'muted' }, active.length ? `${plural(active.length, 'file')} changed. Originals are backed up.` : 'Your game files are original.'),
       h('button', { class: 'btn danger push', disabled: !active.length, onclick: () => run(() => api('revertAll'), 'Everything reverted.') }, 'Revert all')),
@@ -498,7 +567,7 @@ views.active = () => {
         : h('p', { class: 'muted' }, 'Nothing is queued. Changes made while the game runs wait here and go in when it closes.')),
     tile('s12', head('Changes'),
       active.length ? h('div', { class: 'list' }, active.map((r) => h('div', { class: 'item' },
-        art(r.op.label || r.file, r.op.category),
+        r.op.kind === 'swap' && catalog ? picture(catalog.byId.get(r.op.targetFile.toLowerCase()), r.op.category, 'sm') : art(r.op.label || r.file, r.op.category),
         h('div', { class: 'grow' }, h('b', {}, r.op.label || r.file), h('div', { class: 'muted small' }, `${r.file} · ${new Date(r.appliedAt).toLocaleString()}`)),
         h('span', { class: 'tag cap' }, r.op.category || r.op.kind),
         h('button', { class: 'btn sm', onclick: () => run(() => api('revert', r.key), 'Reverted.') }, 'Revert'))))

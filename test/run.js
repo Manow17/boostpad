@@ -9,7 +9,8 @@ const assert = require('assert');
 
 const game = require('../src/main/core/game');
 const upk = require('../src/main/core/upk');
-const { buildCatalog, prettify } = require('../src/main/core/catalog');
+const { buildCatalog, annotate, canSwap, prettify } = require('../src/main/core/catalog');
+const { readThumbnail, decodeDxt } = require('../src/main/core/thumbs');
 const { Engine } = require('../src/main/core/engine');
 const { Store } = require('../src/main/core/store');
 const { Maps, Packs, MAP_SLOT } = require('../src/main/core/library');
@@ -189,6 +190,49 @@ function makeEngine(cooked, running = { value: false }) {
       assert.throws(() => packs.import(src), /invalid entry/);
       assert.deepStrictEqual(packs.list(), [], 'a rejected pack must not stay in the library');
     }
+  });
+
+  test('probe agrees with a full read, and compatible looks are marked', () => {
+    const cat = buildCatalog(real);
+    const wheels = cat.items.filter((i) => i.category === 'wheels');
+    const sample = wheels.filter((_, n) => n % 25 === 0);
+    annotate(real, sample);
+    for (const item of sample) {
+      let full = true;
+      try { upk.readPackageFile(path.join(real, item.file)); } catch { full = false; }
+      assert.strictEqual(item.ok, full, `${item.file}: probe says ${item.ok}, full read says ${full}`);
+    }
+    const a = { id: 'a', len: 10, ok: true }, longer = { id: 'b', len: 12, ok: true }, locked = { id: 'c', len: 12, ok: false };
+    assert.ok(canSwap(a, longer) && !canSwap(longer, a) && !canSwap(a, locked) && !canSwap(a, a));
+    // the rule must match what the engine can actually build
+    const { engine } = makeEngine(real);
+    const readable = sample.filter((i) => i.ok);
+    for (const target of readable.slice(0, 12)) {
+      const built = engine.checkSwap({ kind: 'swap', sourceFile: readable[0].file, targetFile: target.file }).ok;
+      assert.strictEqual(built, canSwap(readable[0], target), `${readable[0].file} -> ${target.file}`);
+    }
+  }, !real);
+
+  test('item pictures decode from the game thumbnails', () => {
+    const cat = buildCatalog(real);
+    annotate(real, cat.items.filter((i) => i.category === 'boosts'));
+    const boosts = cat.items.filter((i) => i.category === 'boosts' && i.ok && i.thumb).slice(0, 25);
+    let decoded = 0;
+    for (const item of boosts) {
+      let pic;
+      try { pic = readThumbnail(real, item.thumb); } catch { continue; } // thumbnail package may use another key
+      assert.ok(pic.width >= 64 && pic.height >= 64 && pic.bgra.length === pic.width * pic.height * 4);
+      assert.ok(new Set(pic.bgra.subarray(0, 4096 * 4)).size > 4 || new Set(pic.bgra).size > 4, `${item.thumb} is a flat colour`);
+      decoded++;
+    }
+    assert.ok(decoded >= boosts.length * 0.8, `only ${decoded} of ${boosts.length} decoded`);
+  }, !real);
+
+  test('DXT1 block decodes to the right colours', () => {
+    // one 4x4 block: colour0 = pure red, colour1 = pure blue, every pixel uses colour0
+    const block = Buffer.from([0x00, 0xf8, 0x1f, 0x00, 0, 0, 0, 0]);
+    const px = decodeDxt(block, 4, 4, false);
+    assert.deepStrictEqual([...px.subarray(0, 4)], [0, 0, 255, 255]); // BGRA
   });
 
   await runAll();

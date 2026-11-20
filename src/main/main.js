@@ -1,10 +1,11 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, screen, protocol, nativeImage } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const game = require('./core/game');
 const { Store } = require('./core/store');
 const { Engine } = require('./core/engine');
-const { buildCatalog } = require('./core/catalog');
+const { buildCatalog, annotate } = require('./core/catalog');
+const { readThumbnail } = require('./core/thumbs');
 const { Maps, Packs, MAP_SLOT } = require('./core/library');
 
 const DEFAULTS = {
@@ -39,6 +40,24 @@ function applyChrome() {
   if (!win || win.isDestroyed()) return;
   win.setBackgroundColor(chrome().bg);
   win.setTitleBarOverlay(titleBar());
+}
+
+// Item pictures, served to the page as thumb://item/<file>. Each one is decoded
+// from the game's own thumbnail package on first use and kept as a small JPEG.
+const THUMB_SIZE = 192;
+function thumbnail(file) {
+  if (path.basename(file) !== file || !/_T_SF\.upk$/i.test(file) || !cooked()) return null;
+  const dir = path.join(app.getPath('userData'), 'thumbs');
+  const cached = path.join(dir, `${file.toLowerCase()}.jpg`);
+  if (fs.existsSync(cached)) { const jpg = fs.readFileSync(cached); return jpg.length ? jpg : null; }
+  fs.mkdirSync(dir, { recursive: true });
+  let jpg = Buffer.alloc(0); // an empty file remembers "this one has no readable picture"
+  try {
+    const { width, height, bgra } = readThumbnail(cooked(), file);
+    jpg = nativeImage.createFromBitmap(bgra, { width, height }).resize({ width: THUMB_SIZE, height: THUMB_SIZE, quality: 'best' }).toJPEG(86);
+  } catch { /* unreadable package or unknown layout */ }
+  fs.writeFileSync(cached, jpg);
+  return jpg.length ? jpg : null;
 }
 
 const cooked = () => (settings.get('installDir') ? game.cookedDir(settings.get('installDir')) : null);
@@ -113,7 +132,15 @@ const api = {
   },
 
   getCatalog() {
-    if (!catalog) catalog = buildCatalog(cooked());
+    if (!catalog) {
+      catalog = buildCatalog(cooked());
+      // which packages are readable: checked once, then remembered per file
+      const index = new Store(path.join(app.getPath('userData'), 'index.json'), { dir: '', files: {} });
+      const files = index.get('dir') === cooked() ? index.get('files') : {};
+      annotate(cooked(), catalog.items, files, new Set(Object.keys(engine.list().active.reduce((m, r) => ({ ...m, [r.key]: 1 }), {}))));
+      index.data = { dir: cooked(), files };
+      index.save();
+    }
     return catalog;
   },
 
@@ -220,6 +247,7 @@ async function poll() {
   send('state', { state: snapshot(), flushed });
 }
 
+protocol.registerSchemesAsPrivileged([{ scheme: 'thumb', privileges: { standard: true, secure: true } }]);
 app.setAppUserModelId('io.github.boostpad'); // own taskbar identity and icon on Windows
 
 app.whenReady().then(async () => {
@@ -235,6 +263,14 @@ app.whenReady().then(async () => {
   packs = new Packs(path.join(data, 'packs'));
   if (cooked() && game.isValidInstall(settings.get('installDir'))) engine.reconcile();
   running = await game.isRunning();
+
+  protocol.handle('thumb', (request) => {
+    let jpg = null;
+    try { jpg = thumbnail(decodeURIComponent(new URL(request.url).pathname.slice(1))); } catch { /* answered as missing */ }
+    return jpg
+      ? new Response(jpg, { headers: { 'content-type': 'image/jpeg', 'cache-control': 'max-age=31536000, immutable' } })
+      : new Response('', { status: 404 });
+  });
 
   ipcMain.handle('api', async (_e, method, ...args) => {
     if (!Object.hasOwn(api, method)) throw new Error(`Unknown method ${method}`);
