@@ -379,10 +379,9 @@ views.garage = () => {
   }
 
   function cell(i, n, blocked) {
-    // under the name: the car a decal is for, or (when searching everywhere) the category
-    const sub = everywhere() ? [catalog.catLabel[i.category], i.sub].filter(Boolean).join(' · ') : i.sub;
+    // under the name: the car a decal is made for
     return h('button', { class: `cell${blocked ? ' no' : ''}`, 'data-id': i.id, style: n < 24 && `--i:${n}`, 'aria-label': i.label, onclick: () => pickItem(i, ui.slot) },
-      picture(i, i.category), h('span', { class: 'name' }, i.label), sub && h('span', { class: 'sub' }, sub));
+      picture(i, i.category), h('span', { class: 'name' }, i.label), i.sub && h('span', { class: 'sub' }, i.sub));
   }
   function mark() { // show which cells are picked, without rebuilding them
     for (const el of grid.children) {
@@ -399,8 +398,19 @@ views.garage = () => {
   const sentinel = h('div', { style: 'height:1px' });
   let list = [], shown = 0;
   const picking = () => ui.slot === 'dst' && ui.src; // choosing a look for a known item
-  // A search looks in every category, until you are choosing a look (that has to match your item's category).
-  const everywhere = () => !!ui.q.trim() && !picking();
+  // A section only ever lists its own items. When a search also matches items in
+  // other sections, they are offered here as links instead of being mixed in.
+  const elsewhere = h('div', { class: 'elsewhere' });
+  const jump = (id) => () => { ui.cat = id; ui.src = ui.dst = ui.check = null; ui.slot = 'src'; popGrid = true; render(); }; // keeps the search text
+  function paintElsewhere(q, here) {
+    const found = {};
+    if (q && !picking()) for (const i of catalog.items) if (i.category !== ui.cat && i.search.includes(q)) found[i.category] = (found[i.category] || 0) + 1;
+    const others = catalog.categories.filter((c) => found[c.id]);
+    elsewhere.hidden = !others.length && !(q && !here);
+    elsewhere.replaceChildren(
+      h('span', { class: 'muted small' }, !others.length ? `Nothing called “${ui.q.trim()}” in any section.` : here ? 'Also found in' : `Nothing in ${catalog.catLabel[ui.cat]} called “${ui.q.trim()}”. Found in`),
+      ...others.map((c) => h('button', { class: 'chip', onclick: jump(c.id) }, icon(c.id, 15), c.label, h('small', {}, found[c.id]))));
+  }
   function more() {
     if (shown >= list.length) return;
     const blocked = (i) => !!picking() && i !== ui.src && !canSwap(ui.src, i);
@@ -414,8 +424,9 @@ views.garage = () => {
   const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) more(); }, { root: document.getElementById('view'), rootMargin: '500px' });
   function fill() {
     const q = ui.q.trim().toLowerCase();
-    list = (everywhere() ? catalog.items : pool()).filter((i) => !q || i.search.includes(q));
+    list = pool().filter((i) => !q || i.search.includes(q));
     const total = list.length;
+    paintElsewhere(q, total);
     const works = picking() ? list.filter((i) => canSwap(ui.src, i)).length : total;
     if (picking() && ui.only) list = list.filter((i) => canSwap(ui.src, i) || i === ui.src);
     // best matches first when searching (name starts with the text), then items with a readable picture
@@ -424,7 +435,7 @@ views.garage = () => {
     grid.replaceChildren();
     shown = 0;
     more();
-    count.textContent = picking() ? `${works} of ${total} looks work with ${ui.src.label}` : everywhere() ? `${plural(total, 'item')} in all categories` : plural(total, 'item');
+    count.textContent = picking() ? `${works} of ${total} looks work with ${ui.src.label}` : plural(total, 'item');
     only.replaceChildren(...(picking() ? [toggle(ui.only, (v) => { ui.only = v; fill(); }), 'Only looks that work'] : []));
   }
   garage = { paintBar, fill, mark, io };
@@ -450,9 +461,9 @@ views.garage = () => {
     icon(c.id, 17), h('span', { class: 'grow' }, c.label), h('small', {}, catalog.counts[c.id] || 0)))),
     tile('s9',
       h('div', { class: 'row wrap' }, h('label', { class: 'search' }, icon('search', 16),
-        field({ placeholder: 'Search all items by name', value: ui.q, oninput: (e) => { ui.q = e.target.value; fill(); } })),
+        field({ placeholder: `Search ${catalog.catLabel[ui.cat].toLowerCase()}`, value: ui.q, oninput: (e) => { ui.q = e.target.value; fill(); } })),
       only, h('span', { class: 'grow' }), count),
-      grid, sentinel));
+      elsewhere, grid, sentinel));
   return root;
 };
 
@@ -463,8 +474,8 @@ async function pickItem(item, which) {
   if (which === 'src') {
     ui.slot = 'dst';
     if (ui.dst && (ui.dst.category !== item.category || !canSwap(item, ui.dst))) ui.dst = null;
-    // found through a search in another category: go there to choose its new look
-    if (item.category !== ui.cat || ui.q) { ui.cat = item.category; ui.q = ''; render(); return; }
+    // picked from a search: clear it, so the looks to choose from are not filtered by it
+    if (ui.q) { ui.q = ''; render(); return; }
   }
   garage.paintBar();
   if (which === 'src') garage.fill(); else garage.mark();

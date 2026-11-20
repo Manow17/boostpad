@@ -23,7 +23,7 @@ No account, no subscription, no server. Everything runs on your PC, and every ga
 
 | Tab | What it does |
 | --- | --- |
-| **Garage** | Give an item you own the look of another item (cars, wheels, boosts, decals, toppers, antennas, engine sounds, trails, goal explosions, paint finishes, banners, borders, anthems). Items are shown with their real names and pictures, read from your own game files, and the search looks through every category at once. Once you pick your item, only the looks that work with it are listed. Everything applied or queued is listed there with a Revert button. |
+| **Garage** | Give an item you own the look of another item (cars, wheels, boosts, decals, toppers, antennas, engine sounds, trails, goal explosions, paint finishes, banners, borders, anthems). Items are shown with their real names and pictures, read from your own game files, and each section lists only its own items. A search stays in the section you are in and tells you which other sections also have a match. Once you pick your item, only the looks that work with it are listed. Everything applied or queued is listed there with a Revert button. |
 | **Workshop Maps** | Load a training/challenge map into the Underpass slot and play it from Free Play. |
 | **Map Merge** | Mix the game's own arenas: put the stadium of one arena into the surroundings of another, and add snow where the game has something to do it with. Experimental. |
 | **Presets** | Save everything that is active and switch setups in one click. Unlimited. Copy a preset as a code to pass it on. |
