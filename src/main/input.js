@@ -22,10 +22,11 @@ class Input extends EventEmitter {
 
   get running() { return !!this.proc; }
 
-  start(profile) {
+  // own: take PlayStation controllers for the helper alone, so games cannot open them
+  start(profile, { own = false } = {}) {
     if (this.proc) return this.configure(profile);
     if (!fs.existsSync(this.exe)) throw new Error('The input helper (bin/openw-input.exe) is missing. Build it with npm run build-input.');
-    const proc = spawn(this.exe, [], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+    const proc = spawn(this.exe, own ? ['--own'] : [], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
     this.proc = proc;
     this.status = { running: true, vigem: null, pad: null, error: '' };
     let buf = '';
@@ -56,7 +57,7 @@ class Input extends EventEmitter {
       return;
     }
     if (kind === 'vigem') this.status.vigem = rest[0] === 'ok';
-    else if (kind === 'pad') this.status.pad = rest[0] === 'none' ? null : { kind: rest[0], conn: rest[1] };
+    else if (kind === 'pad') this.status.pad = rest[0] === 'none' ? null : { kind: rest[0], conn: rest[1], access: rest[3] || 'shared' };
     else if (kind === 'error') this.status.error = rest.slice(1).join(' ');
     else return;
     this.emit('status', { ...this.status });
@@ -65,6 +66,8 @@ class Input extends EventEmitter {
   write(text) { if (this.proc && this.proc.stdin.writable) this.proc.stdin.write(`${text}\n`); }
   configure(profile) { for (const l of T.lines(profile)) this.write(l); }
   watch(on) { this.watching = !!on; this.write(`watch ${on ? 1 : 0}`); }
+  own(on) { this.write(`own ${on ? 1 : 0}`); }
+  reopen() { this.write('reopen'); }
 
   stop() {
     const proc = this.proc;

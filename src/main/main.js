@@ -28,7 +28,8 @@ const DEFAULTS = {
     music: { on: false, x: null, y: null, size: 100, source: 'auto' },
   },
   // OpenW Input: profiles of stick, trigger and button settings (src/shared/transform.js)
-  input: { on: false, profile: 'standard', profiles: [{ ...T.TEMPLATES.standard(), id: 'standard' }], hidden: [] },
+  // own: hide PlayStation controllers without HidHide, by opening them for OpenW alone
+  input: { on: false, own: true, profile: 'standard', profiles: [{ ...T.TEMPLATES.standard(), id: 'standard' }], hidden: [] },
 };
 
 const arg = (name) => {
@@ -454,7 +455,9 @@ const api = {
 
   // ---- OpenW Input: the controller remapper ----
   async inputInfo() { return { status: input.status, drivers: await inputLib.drivers() }; },
-  inputStart() { input.start(inputProfile()); saveInput({ on: true }); return snapshot(); },
+  inputStart() { input.start(inputProfile(), { own: settings.get('input').own !== false }); saveInput({ on: true }); return snapshot(); },
+  inputOwn(on) { saveInput({ own: !!on }); input.own(!!on); return snapshot(); },
+  inputReopen() { input.reopen(); },
   inputStop() { input.stop(); saveInput({ on: false }); return snapshot(); },
   inputWatch(on) { input.watch(!!on); },
   // a setting changed: saved, and the helper gets it at once
@@ -602,7 +605,7 @@ app.whenReady().then(async () => {
   input.on('status', (st) => send('input-status', st));
   input.on('state', (st) => send('input-state', st));
   if (settings.get('input').on && !smokeShot) {
-    try { input.start(inputProfile()); } catch (e) { console.error(e.message); }
+    try { input.start(inputProfile(), { own: settings.get('input').own !== false }); } catch (e) { console.error(e.message); }
   }
   // settings from an older version: bring the overlay options into the current shape
   const saved = settings.get('overlay');

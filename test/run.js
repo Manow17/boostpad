@@ -568,11 +568,11 @@ function makeEngine(cooked, running = { value: false }) {
     inp.on('status', (s) => seen.push(s));
     inp.on('state', (s) => seen.push(s));
     inp.line('vigem ok 1');
-    inp.line('pad dualsense bt 0');
+    inp.line('pad dualsense bt 0 own');
     inp.line('state 0.1 -0.2 0 0 0.5 1 3 0.12 -0.25 0 0 0.6 1 4096');
     inp.line('pad none');
     assert.strictEqual(seen[0].vigem, true);
-    assert.deepStrictEqual(seen[1].pad, { kind: 'dualsense', conn: 'bt' });
+    assert.deepStrictEqual(seen[1].pad, { kind: 'dualsense', conn: 'bt', access: 'own' });
     assert.deepStrictEqual(seen[2].raw, [0.1, -0.2, 0, 0, 0.5, 1]);
     assert.strictEqual(seen[2].outButtons, 4096);
     assert.strictEqual(seen[3].pad, null);

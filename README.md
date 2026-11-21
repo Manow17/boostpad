@@ -43,7 +43,14 @@ Per stick, as in Steam Input: dead zone shape (circle; cross, where each axis ha
 
 The curve names are Steam's; their exponents (Aggressive 0.6, Relaxed 1.5, Wide 2, Extra Wide 3) are OpenW's own approximation, as Steam does not publish its numbers. The page draws each setting with the same maths the helper uses, and a test checks the two agree.
 
-It needs two free drivers by Nefarius Software Solutions, the ones DS4Windows uses, which you install yourself: **[ViGEmBus](https://github.com/nefarius/ViGEmBus/releases)** for the virtual controller, and **[HidHide](https://github.com/nefarius/HidHide/releases)** to hide your real controller from games, so they do not get every press twice. The page links both. Hiding goes through HidHide's own command line, run elevated (Windows asks each time), lets only the helper see the controller, and stays until you show it again on the page. Rocket League's own controller dead zone is best turned down, since OpenW Input handles it.
+**The virtual controller needs ViGEmBus**, a free driver by Nefarius Software Solutions (the one DS4Windows uses), which you install yourself from its [releases page](https://github.com/nefarius/ViGEmBus/releases); the page links it. Only a driver can add a controller that games see, and on Windows 10 and 11 with Secure Boot a driver only loads if it is signed through Microsoft, which needs a company code-signing certificate. The one way around that, Windows' test-signing mode, is not supported by Easy Anti-Cheat ([Facepunch support](https://support.facepunchstudios.com/hc/en-us/articles/214240705-Driver-Signature-Enforcement-has-been-disabled)), so Rocket League would not run. Windows' own driverless gamepad injection (`InputInjector`) refuses to start for a desktop app (tested), and games read controllers through XInput, which would not see it anyway. So OpenW uses ViGEmBus rather than a driver of its own.
+
+**Hiding the real controller**, so games do not get every press twice:
+
+- **Without a driver (PlayStation controllers).** With *Hide without a driver* on (the default), the helper opens your DualShock 4 or DualSense for itself alone, so other apps cannot open it and only see the virtual controller. Windows allows that only while no other app has the controller open, so turn OpenW Input on before Steam or Rocket League; if something already had it, the page says so and has a Try again button. It ends when OpenW Input stops. On the test machine Steam was running and held the controller, so this has not been seen to work yet.
+- **With [HidHide](https://github.com/nefarius/HidHide/releases)** (optional, signed, free): needed for Xbox controllers, which are read through XInput and cannot be opened exclusively, or when another app keeps your PlayStation controller open. Hiding goes through HidHide's own command line, run elevated (Windows asks each time), lets only the helper see the controller, and stays until you show it again on the page.
+
+Rocket League's own controller dead zone is best turned down, since OpenW Input handles it.
 
 ### Music in the overlay
 
@@ -79,7 +86,7 @@ Changes are written while Rocket League is closed. The game keeps the arena file
 | Item swaps | **Experimental.** The package rewrite is tested structurally (see below) but nobody has yet confirmed the result in game |
 | Workshop maps | File replacement is tested; whether a given map loads depends on the file |
 | Overlays, profile | Working. The now-playing reader is tested against a real Windows media session (title, artist, cover, pause) and the controller drawing against a real pad; the overlays have not been checked over the running game |
-| OpenW Input | **New.** The helper reads a DualShock 4 over USB on the test machine and its settings maths is tested against the page's. The virtual controller, HidHide, rumble, lightbars, Bluetooth, DualSense and Xbox controllers have not been checked yet, as the test machine has neither driver installed |
+| OpenW Input | **New.** The helper reads a DualShock 4 over USB on the test machine and its settings maths is tested against the page's. The virtual controller, hiding (with or without HidHide), rumble, lightbars, Bluetooth, DualSense and Xbox controllers have not been checked yet: the test machine has no ViGEmBus, and Steam held the controller |
 | Map Merge | **Experimental.** The arena scan and the file replacement are tested; stadium and whole-arena merges have been checked in game on one or two arenas, not on every pair; built merges are covered by a round-trip test on a real map but not checked in game yet. Same arena every match is checked on one arena; the snowy versions are the game's own arenas |
 
 Fixed in 0.1.1: when the item you own and the new look were encrypted with different keys, 0.1.0 wrote the swapped file with the wrong one and the game crashed when it loaded the item. Swaps and arena changes are now written with the key of the file they replace, and anything 0.1.0 wrote wrongly is rebuilt automatically the next time OpenW runs with the game closed.
@@ -99,8 +106,8 @@ Not implemented: custom paint colours, 3D garage preview, custom balls and sound
 Requires [Node.js](https://nodejs.org) 20 or newer.
 
 ```
-git clone https://github.com/Manow17/boostpad.git
-cd boostpad
+git clone https://github.com/Manow17/openw.git
+cd openw
 npm install
 npm start
 ```

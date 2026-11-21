@@ -10,6 +10,7 @@
 // Talks to OpenW over stdin/stdout, one line per message (see src/main/input.js):
 //   in:  stick/trigger/button/rumble/light lines, then "apply"; "watch 1|0"; "quit"
 //   out: hello, vigem ..., pad ..., state ... (while watched), error ...
+//   --own (or "own 1"): take a PlayStation controller for this process alone, so games cannot open it
 // Without ViGEmBus it still reads the controller, so the page can show what the settings do.
 // It quits when its stdin closes, and the virtual pad goes away with its handle.
 //
@@ -264,6 +265,9 @@ static std::mutex stepLock;
 static Config cfg, pending;
 static std::atomic<bool> quitting{ false };
 static std::atomic<int> watching{ 0 };
+// Take a PlayStation controller for ourselves (no sharing), so games cannot open it: hiding
+// without HidHide. Windows only allows it while no other app has the controller open.
+static std::atomic<bool> wantOwn{ false }, reopen{ false };
 static Raw shownRaw; static XReport shownOut = {};
 
 // what the active controller is, for rumble and light
@@ -463,7 +467,7 @@ static bool runHid() {
   HDEVINFO di = SetupDiGetClassDevsW(&hidGuid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
   if (di == INVALID_HANDLE_VALUE) return false;
   SP_DEVICE_INTERFACE_DATA ifd = { sizeof ifd };
-  HANDLE h = INVALID_HANDLE_VALUE; Kind kind = NONE; HIDP_CAPS caps = {};
+  HANDLE h = INVALID_HANDLE_VALUE; Kind kind = NONE; HIDP_CAPS caps = {}; bool own = false;
   for (DWORD i = 0; h == INVALID_HANDLE_VALUE && SetupDiEnumDeviceInterfaces(di, nullptr, &hidGuid, i, &ifd); i++) {
     DWORD need = 0;
     SetupDiGetDeviceInterfaceDetailW(di, &ifd, nullptr, 0, &need, nullptr);
@@ -471,14 +475,25 @@ static bool runHid() {
     auto* det = (PSP_DEVICE_INTERFACE_DETAIL_DATA_W)mem.data();
     det->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
     if (!SetupDiGetDeviceInterfaceDetailW(di, &ifd, det, need, nullptr, nullptr)) continue;
-    HANDLE dev = CreateFileW(det->DevicePath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+    // a handle without read or write access does not count against sharing
+    HANDLE dev = CreateFileW(det->DevicePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
     if (dev == INVALID_HANDLE_VALUE) continue;
     HIDD_ATTRIBUTES a = { sizeof a };
     Kind k = HidD_GetAttributes(dev, &a) ? psKind(a.VendorID, a.ProductID) : NONE;
     PHIDP_PREPARSED_DATA pp;
     if (k != NONE && HidD_GetPreparsedData(dev, &pp)) {
       HidP_GetCaps(pp, &caps); HidD_FreePreparsedData(pp);
-      if (caps.UsagePage == 1 && (caps.Usage == 5 || caps.Usage == 4)) { h = dev; kind = k; continue; }
+      if (caps.UsagePage == 1 && (caps.Usage == 5 || caps.Usage == 4)) {
+        CloseHandle(dev);
+        if (wantOwn) {
+          h = CreateFileW(det->DevicePath, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+          own = h != INVALID_HANDLE_VALUE;
+        }
+        if (h == INVALID_HANDLE_VALUE) // another app has it open: share it
+          h = CreateFileW(det->DevicePath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+        if (h != INVALID_HANDLE_VALUE) kind = k;
+        continue;
+      }
     }
     CloseHandle(dev);
   }
@@ -492,13 +507,13 @@ static bool runHid() {
     f[0] = 0x05; if (!HidD_GetFeature(h, f.data(), caps.FeatureReportByteLength)) { f[0] = 0x02; HidD_GetFeature(h, f.data(), caps.FeatureReportByteLength); }
   }
   { std::lock_guard<std::mutex> g(padLock); padKind = kind; padBt = !usb; padHid = h; padOutLen = caps.OutputReportByteLength; padSlot = -1; dsLightSetup = false; }
-  say("pad %s %s 0", KIND_NAME[kind], usb ? "usb" : "bt");
+  say("pad %s %s 0 %s", KIND_NAME[kind], usb ? "usb" : "bt", own ? "own" : "shared");
   sendFeedback();
 
   std::vector<BYTE> buf(std::max<USHORT>(caps.InputReportByteLength, 64));
   OVERLAPPED ov = {}; ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   int silent = 0;
-  while (!quitting) {
+  while (!quitting && !reopen) {
     ResetEvent(ov.hEvent);
     DWORD n = 0;
     if (!ReadFile(h, buf.data(), (DWORD)buf.size(), nullptr, &ov) && GetLastError() != ERROR_IO_PENDING) break;
@@ -509,7 +524,9 @@ static bool runHid() {
     Raw r;
     if (parseReport(kind, usb, buf.data(), n, r)) step(r);
   }
+  CancelIo(h);
   CloseHandle(ov.hEvent);
+  reopen = false;
   { std::lock_guard<std::mutex> g(padLock); padKind = NONE; padHid = INVALID_HANDLE_VALUE; }
   CloseHandle(h);
   say("pad none");
@@ -538,10 +555,10 @@ static bool runXInput() {
   int slot = findXInput();
   if (slot < 0) return false;
   { std::lock_guard<std::mutex> g(padLock); padKind = XINPUT; padSlot = slot; padHid = INVALID_HANDLE_VALUE; }
-  say("pad xinput usb %d", slot);
+  say("pad xinput usb %d shared", slot);
   HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
   XINPUT_STATE s;
-  while (!quitting) {
+  while (!quitting && !reopen) {
     if (xGet(slot, &s) != ERROR_SUCCESS) break;
     const XINPUT_GAMEPAD& g = s.Gamepad;
     Raw r;
@@ -554,6 +571,7 @@ static bool runXInput() {
     else Sleep(1);
   }
   if (timer) CloseHandle(timer);
+  reopen = false;
   { std::lock_guard<std::mutex> g(padLock); padKind = NONE; padSlot = -1; }
   say("pad none");
   return true;
@@ -590,6 +608,7 @@ static void inputThread() {
   while (fgets(buf, sizeof buf, stdin)) {
     std::string line = buf;
     while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+    if (line.empty()) continue;
     if (line == "quit") break;
     if (line == "apply") {
       { std::lock_guard<std::mutex> g(stepLock); cfg = pending; }
@@ -597,6 +616,9 @@ static void inputThread() {
       continue;
     }
     if (line.rfind("watch ", 0) == 0) { watching = atoi(line.c_str() + 6); continue; }
+    // let go of the controller and open it again (to take it for ourselves, or to share it)
+    if (line.rfind("own ", 0) == 0) { wantOwn = atoi(line.c_str() + 4) != 0; reopen = true; continue; }
+    if (line == "reopen") { reopen = true; continue; }
     if (!parseLine(line, pending)) say("error BAD_LINE %s", line.c_str());
   }
   quitting = true; // OpenW closed or asked: let go of everything
@@ -604,6 +626,7 @@ static void inputThread() {
 
 int main(int argc, char** argv) {
   if (argc > 1 && !strcmp(argv[1], "--transform")) return transformMode();
+  for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--own")) wantOwn = true;
   HANDLE once = CreateMutexW(nullptr, TRUE, L"Local\\OpenWInput");
   if (GetLastError() == ERROR_ALREADY_EXISTS) { say("error RUNNING OpenW Input is already running"); return 2; }
   crcInit();
