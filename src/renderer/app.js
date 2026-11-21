@@ -680,7 +680,7 @@ const HOLD_TIMES = [200, 300, 400, 500, 700, 1000].map((ms) => [ms, `${ms} ms`])
 const TURBO_RATES = [5, 8, 10, 15, 20, 30].map((hz) => [hz, `${hz} a second`]);
 const LIGHTS = ['#00d8c8', '#2563eb', '#7c3aed', '#db2777', '#dc2626', '#ea580c', '#facc15', '#16a34a', '#ffffff'];
 
-const ctl = { section: 'left', info: null, hid: null, live: null, watching: false, ui: null, fake: {} };
+const ctl = { section: 'left', info: null, live: null, watching: false, ui: null, fake: {}, busy: false, want: false };
 const ctlLive = () => ui.tab === 'controller' && ctl.ui && ctl.ui.root.isConnected;
 const curProfile = () => { const i = S.settings.input; return i.profiles.find((p) => p.id === i.profile) || i.profiles[0]; };
 const padKind = () => (ctl.info && ctl.info.status.pad ? ctl.info.status.pad.kind : null);
@@ -694,14 +694,14 @@ function shownSources() {
 async function refreshInput() { ctl.info = await api('inputInfo'); if (ui.tab === 'controller') render(); }
 // The first time OpenW Input is turned on, the drivers that come with OpenW go in, quietly and
 // together; Windows' permission prompt is the only thing anyone sees. Only the virtual
-// controller's driver is needed to go on, the other is tried once.
+// controller's driver is needed to go on.
 async function setUp(dr) {
   const has = dr.bundled || {};
-  const list = [!dr.vigem && has.vigem && 'vigem', !dr.hidhide && has.hidhide && !S.settings.input.hidhideTried && 'hidhide'].filter(Boolean);
+  const list = [!dr.vigem && has.vigem && 'vigem', !dr.hidhide && has.hidhide && 'hidhide'].filter(Boolean);
   if (!list.length) return;
   toast('Setting up OpenW Input. Windows asks for permission once.');
   const { results, info, state } = await api('inputInstallDrivers', list);
-  ctl.info = info; ctl.hid = null; S = state;
+  ctl.info = info; S = state;
   if (results.vigem && results.vigem.startsWith('failed')) throw new Error(`OpenW Input could not be set up: ${results.vigem}.`);
   if (Object.values(results).includes('restart')) toast('Restart Windows once to finish setting up.');
 }
@@ -790,27 +790,20 @@ views.controller = () => {
   const flip = (obj, key) => toggle(obj[key], (v) => { obj[key] = v; save(); preview(); });
 
   // --- on / off ---
-  const own = inp.own !== false, ps = st.pad && st.pad.kind !== 'xinput';
-  const padText = st.pad ? `${PAD_NAMES[st.pad.kind] || 'Controller'} over ${st.pad.conn === 'bt' ? 'Bluetooth' : 'USB'}${st.pad.access === 'own' ? ', hidden from games' : ''}.` : 'No controller found yet. Plug one in or connect it over Bluetooth.';
+  const own = inp.own !== false;
+  const padText = st.pad ? `${PAD_NAMES[st.pad.kind] || 'Controller'} over ${st.pad.conn === 'bt' ? 'Bluetooth' : 'USB'}${st.hidden ? ', hidden from games' : ''}.` : 'No controller found yet. Plug one in or connect it over Bluetooth.';
   const vText = st.vigem === false ? 'Not set up yet: turn OpenW Input off and on again to finish.' : st.vigem ? 'Virtual Xbox controller is on.' : 'Starting…';
   root.append(tile(`s12 bar${st.running ? ' ink' : ''}`, art('OpenW Input', 'stick'),
     h('div', { class: 'grow' }, h('b', {}, 'OpenW Input'), h('div', { class: 'muted small' }, st.running ? `${padText} ${vText}` : st.error || 'Off. Turn it on to play with these settings.')),
-    toggle(st.running, (v) => run(async () => {
-      if (v) await setUp(dr); // first time only
-      const r = await api(v ? 'inputStart' : 'inputStop');
-      ctl.info = await api('inputInfo');
-      return r;
-    }, v ? 'OpenW Input is on.' : 'OpenW Input is off.'))));
+    onOff(st)));
 
   if (!dr.helper) root.append(noteTile('warn', 's12', 'The input helper (bin/openw-input.exe) is missing from this copy of OpenW. Build it with npm run build-input.'));
-  if (inp.hidden.length && !st.running) {
-    root.append(noteTile('warn', 's12', h('b', {}, 'Your controller is hidden from games'), h('p', {}, 'Only OpenW Input can see it, and OpenW Input is off. Turn it on to play, or show the controller again.'),
-      h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: () => run(async () => { const r = await api('hidShow'); ctl.hid = null; return r; }, 'Your controller is visible again.') }, 'Show it again'))));
-  } else if (st.running && st.pad && st.pad.access !== 'own' && !inp.hidden.length) {
-    root.append(noteTile(st.vigem ? 'warn' : 'info', 's12', h('b', {}, 'Games can also see your real controller'),
-      h('p', {}, ps && own ? 'Another app had it open before OpenW Input, so it could not be hidden. Close Steam (and anything else that reads controllers), then press Try again.'
-        : 'Hide it under Hide real controller, or games get every press twice.'),
-      ps && own && h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: () => { api('inputReopen'); toast('Trying to take the controller again.'); } }, 'Try again'))));
+  if (st.running && own && st.reconnect && st.reconnect.length && !ctl.busy) {
+    root.append(noteTile('info', 's12', h('b', {}, 'One last step: reconnect your controller'),
+      h('p', {}, 'Unplug it and plug it back in (or turn it off and on over Bluetooth). It is then hidden from games every time, and they only see OpenW’s controller. Needed once.')));
+  } else if (st.running && st.pad && own && !st.hidden && !ctl.busy) {
+    root.append(noteTile('info', 's12', h('b', {}, 'Your controller is not hidden from games yet'),
+      h('p', {}, 'Games may get every press twice. See Hide real controller.')));
   }
 
   // --- profiles ---
@@ -927,47 +920,44 @@ views.controller = () => {
           h('button', { class: `btn sm${p.light ? '' : ' primary'}`, onclick: () => { p.light = ''; redo(); } }, 'Leave as it is'),
           LIGHTS.map((c) => h('button', { class: `swatch${p.light === c ? ' on' : ''}`, style: `background:${c}`, 'aria-label': c, onclick: () => { p.light = c; redo(); } })))));
   } else {
-    root.append(...[ownTile(st, inp), hideSection(dr, inp)].filter(Boolean));
+    root.append(hideTile(st, dr, inp));
   }
   requestAnimationFrame(() => ctl.ui.draw());
   return root;
 };
 
-// Hiding without a driver: the helper opens a PlayStation controller for itself alone.
-function ownTile(st, inp) {
-  const own = inp.own !== false, pad = st.pad, hidden = !!(st.running && pad && pad.access === 'own');
-  const state = !st.running ? 'OpenW Input is off.'
-    : !pad ? 'No controller found.'
-      : pad.kind === 'xinput' ? 'Xbox controllers cannot be hidden this way. Use the list below.'
-        : hidden ? 'Hidden: only OpenW Input can open your controller.'
-          : own ? 'Not hidden: another app had your controller open first (Steam, for example). Close it, then press Try again.'
-            : 'Off: games can see your controller.';
-  return tile(`s12 ctl${hidden ? ' ink' : ''}`, head('Hide while OpenW Input runs', toggle(own, (v) => run(() => api('inputOwn', v), v ? 'OpenW Input takes your controller for itself.' : 'Your controller is shared again.'))),
-    h('p', { class: 'muted' }, 'For DualShock 4, DualSense and DualSense Edge. OpenW Input opens your controller for itself alone, so Rocket League and other apps cannot open it and only see the virtual controller. Windows allows that only while no other app has the controller open, so turn OpenW Input on before you start Steam or Rocket League. It ends when OpenW Input stops, so nothing stays hidden.'),
-    h('div', { class: 'opt-row' }, h('span', { class: `tag${hidden ? ' on' : ''}` }, hidden ? 'Hidden' : 'Not hidden'), h('div', { class: 'grow muted small' }, state),
-      st.running && pad && pad.kind !== 'xinput' && own && !hidden && h('button', { class: 'btn sm', onclick: () => { api('inputReopen'); toast('Trying to take the controller again.'); } }, 'Try again')));
+// The OpenW Input switch. While it starts or stops it shows where it is going and does not
+// take another click, so status updates in between cannot make it bounce.
+function onOff(st) {
+  const el = toggle(ctl.busy ? ctl.want : st.running, (v) => {
+    if (ctl.busy) return;
+    ctl.busy = true; ctl.want = v;
+    run(async () => {
+      if (v) await setUp(ctl.info.drivers); // the first time only: drivers go in
+      const r = await api(v ? 'inputStart' : 'inputStop');
+      ctl.info = await api('inputInfo');
+      return r;
+    }, v ? 'OpenW Input is on.' : 'OpenW Input is off.').finally(() => { ctl.busy = false; if (ui.tab === 'controller') render(); });
+  });
+  el.disabled = ctl.busy;
+  return el;
 }
 
-// Hide from every app (HidHide, set up with OpenW Input): only OpenW's helper sees the controller.
-function hideSection(dr, inp) {
-  if (!dr.hidhide) return null; // not set up (yet): nothing to show
-  if (!ctl.hid) {
-    api('hidState').then((s) => { ctl.hid = s; if (ui.tab === 'controller') render(); }).catch((e) => { ctl.hid = { controllers: [], hidden: [], readable: false }; toast(String(e.message || e), true); });
-    return tile('s12', empty('stick', 'Looking for controllers', 'Finding the controllers that can be hidden.'));
-  }
-  const hs = ctl.hid;
-  const again = (fn, msg) => run(async () => { const r = await fn(); ctl.hid = null; return r; }, msg);
-  const rows = hs.controllers.length ? hs.controllers.map((c) => h('div', { class: 'opt-row' },
-    h('span', { class: `tag${c.hidden ? ' on' : ''}` }, c.hidden ? 'Hidden' : 'Visible'),
-    h('div', { class: 'lbl grow' }, h('b', {}, c.name), h('div', { class: 'muted small' }, [c.vid && `${c.vid}:${c.pid}`, c.virtual && 'may be OpenW’s own virtual controller: leave it visible'].filter(Boolean).join(' · '))),
-    c.hidden ? h('button', { class: 'btn sm', onclick: () => again(() => api('hidShow', c.paths), 'Visible again.') }, 'Show')
-      : h('button', { class: 'btn sm primary', onclick: () => again(() => api('hidHide', c.paths), 'Hidden from games.') }, 'Hide')))
-    : [h('p', { class: 'muted' }, hs.readable === false ? 'The controller list could not be read. Hiding from here still works; press Refresh to try again.' : 'No controllers found. Plug yours in and press Refresh.')];
-  return tile('s12 ctl', head('Hide from every app', h('button', { class: 'btn sm', onclick: () => { ctl.hid = null; render(); } }, 'Refresh')),
-    h('p', { class: 'muted' }, 'For any controller, Xbox ones too, and even when another app had it open first. Hidden controllers are only seen by OpenW Input, so Rocket League gets each press once, from the virtual controller. They stay hidden after OpenW closes, until you show them again here. Windows asks for permission each time this changes.'),
-    rows,
-    inp.hidden.length > 0 && h('div', { class: 'row push' }, h('span', { class: 'muted small grow' }, `${plural(inp.hidden.length, 'device')} hidden by OpenW.`),
-      h('button', { class: 'btn sm', onclick: () => again(() => api('hidShow'), 'Everything OpenW hid is visible again.') }, 'Show all again')));
+// Hiding the real controller from games while OpenW Input runs (HidHide, or for PlayStation
+// controllers without it, opening them for OpenW alone).
+function hideTile(st, dr, inp) {
+  const own = inp.own !== false, hidden = !!(st.running && st.hidden);
+  const ps = st.pad && st.pad.kind !== 'xinput';
+  const state = !own ? 'Off: games see your controller as well as OpenW’s.'
+    : !st.running ? 'It is hidden as soon as OpenW Input is on.'
+      : !st.pad ? 'No controller found.'
+        : hidden ? 'Hidden: games only see OpenW’s virtual controller.'
+          : st.reconnect && st.reconnect.length ? 'Unplug your controller and plug it back in once, then it is hidden.'
+            : 'It could not be hidden this time.';
+  return tile(`s12 ctl${hidden ? ' ink' : ''}`, head('Hide your controller from games', toggle(own, (v) => run(() => api('inputOwn', v), v ? 'Your controller is hidden while OpenW Input runs.' : 'Games see your controller again.'))),
+    h('p', { class: 'muted' }, 'While OpenW Input is on, games only see OpenW’s virtual controller, so every press counts once. Your controller is back for everything the moment OpenW Input turns off or OpenW closes.'),
+    h('div', { class: 'opt-row' }, h('span', { class: `tag${hidden ? ' on' : ''}` }, hidden ? 'Hidden' : 'Not hidden'), h('div', { class: 'grow muted small' }, state),
+      st.running && own && !hidden && ps && !dr.hidhide && h('button', { class: 'btn sm', onclick: () => { api('inputReopen'); toast('Trying again.'); } }, 'Try again')));
 }
 
 /* ---------- presets ---------- */

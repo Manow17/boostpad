@@ -180,10 +180,11 @@ static int transformMode() {
 /* ---------------- ViGEmBus: the virtual Xbox 360 controller ---------------- */
 
 static const GUID VIGEM_BUS = { 0x96E42B22, 0xF5E9, 0x42F8, { 0xB0, 0x43, 0xED, 0x0F, 0x93, 0x2F, 0x01, 0x4F } };
+// codes as in ViGEm's BusShared.h: plug-in, version and ready checks are write-only
 #define BUS_IOCTL(fn, access) CTL_CODE(FILE_DEVICE_BUS_EXTENDER, fn, METHOD_BUFFERED, access)
-static const DWORD IOCTL_PLUGIN = BUS_IOCTL(0x801, FILE_READ_DATA | FILE_WRITE_DATA);
-static const DWORD IOCTL_CHECK_VERSION = BUS_IOCTL(0x803, FILE_READ_DATA | FILE_WRITE_DATA);
-static const DWORD IOCTL_WAIT_READY = BUS_IOCTL(0x804, FILE_READ_DATA | FILE_WRITE_DATA);
+static const DWORD IOCTL_PLUGIN = BUS_IOCTL(0x801, FILE_WRITE_DATA);
+static const DWORD IOCTL_CHECK_VERSION = BUS_IOCTL(0x803, FILE_WRITE_DATA);
+static const DWORD IOCTL_WAIT_READY = BUS_IOCTL(0x804, FILE_WRITE_DATA);
 static const DWORD IOCTL_XUSB_NOTIFY = BUS_IOCTL(0xA01, FILE_READ_DATA | FILE_WRITE_DATA);
 static const DWORD IOCTL_XUSB_SUBMIT = BUS_IOCTL(0xA02, FILE_WRITE_DATA);
 static const DWORD IOCTL_XUSB_USER_INDEX = BUS_IOCTL(0xA07, FILE_READ_DATA | FILE_WRITE_DATA);

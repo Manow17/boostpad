@@ -28,8 +28,9 @@ const DEFAULTS = {
     music: { on: false, x: null, y: null, size: 100, source: 'auto' },
   },
   // OpenW Input: profiles of stick, trigger and button settings (src/shared/transform.js)
-  // own: hide PlayStation controllers without HidHide, by opening them for OpenW alone
-  input: { on: false, own: true, profile: 'standard', profiles: [{ ...T.TEMPLATES.standard(), id: 'standard' }], hidden: [] },
+  // own: hide the real controller from games while OpenW Input runs (HidHide when it is there,
+  // otherwise PlayStation controllers are opened for OpenW alone); autoHidden: what is hidden now
+  input: { on: false, own: true, profile: 'standard', profiles: [{ ...T.TEMPLATES.standard(), id: 'standard' }], autoHidden: [] },
 };
 
 const arg = (name) => {
@@ -109,6 +110,50 @@ function retryMissingThumbs() {
 const cooked = () => (settings.get('installDir') ? game.cookedDir(settings.get('installDir')) : null);
 const inputProfile = () => { const i = settings.get('input'); return T.complete(i.profiles.find((p) => p.id === i.profile) || i.profiles[0]); };
 const saveInput = (patch) => settings.set('input', { ...settings.get('input'), ...patch });
+
+// ---- OpenW Input: running the helper and hiding the real controller meanwhile ----
+// With HidHide the real controller is hidden from every app but the helper while OpenW Input
+// runs, and shown again when it stops or OpenW quits; no permission prompt. Without it,
+// PlayStation controllers are opened for the helper alone (works only if nothing else has
+// them open). Hiding and showing run one after another.
+let hiding = Promise.resolve();
+const queueHide = (fn) => (hiding = hiding.then(fn, fn));
+const hideWanted = () => settings.get('input').own !== false;
+let reconnect = []; // controllers HidHide cannot hide until they reconnect once
+const inputStatus = () => ({
+  ...input.status,
+  hidden: ((settings.get('input').autoHidden || []).length > 0 && !reconnect.length) || !!(input.status.pad && input.status.pad.access === 'own'),
+  reconnect,
+});
+const pushInputStatus = () => send('input-status', inputStatus());
+async function hideNow() {
+  if (!hideWanted() || !input.running || !inputLib.hasHidHide()) return;
+  try {
+    const res = await inputLib.hideControllers();
+    if (res) {
+      saveInput({ autoHidden: [...new Set([...(settings.get('input').autoHidden || []), ...res.paths])] });
+      reconnect = res.reconnect;
+    }
+  } catch (e) { console.error(`hiding the controller: ${e.message}`); }
+  pushInputStatus();
+}
+async function showNow() {
+  const paths = settings.get('input').autoHidden || [];
+  if (paths.length) {
+    try { await inputLib.showControllers(paths); } catch (e) { console.error(`showing the controller: ${e.message}`); }
+    saveInput({ autoHidden: [] });
+  }
+  reconnect = [];
+  pushInputStatus();
+}
+async function startInput() {
+  input.start(inputProfile(), { own: hideWanted() && !inputLib.hasHidHide() });
+  await queueHide(hideNow);
+}
+async function stopInput() {
+  await input.stop();
+  await queueHide(showNow);
+}
 const send = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
 
 // Lists the items and checks which packages are readable. The check is remembered
@@ -454,11 +499,19 @@ const api = {
   openDataFolder() { shell.openPath(app.getPath('userData')); },
 
   // ---- OpenW Input: the controller remapper ----
-  async inputInfo() { return { status: input.status, drivers: await inputLib.drivers() }; },
-  inputStart() { input.start(inputProfile(), { own: settings.get('input').own !== false }); saveInput({ on: true }); return snapshot(); },
-  inputOwn(on) { saveInput({ own: !!on }); input.own(!!on); return snapshot(); },
+  async inputInfo() { return { status: inputStatus(), drivers: await inputLib.drivers() }; },
+  // both resolve once the helper has really started or stopped, so the switch does not bounce
+  async inputStart() { await startInput(); saveInput({ on: true }); return snapshot(); },
+  async inputStop() { await stopInput(); saveInput({ on: false }); return snapshot(); },
+  async inputOwn(on) {
+    saveInput({ own: !!on });
+    if (input.running) {
+      if (inputLib.hasHidHide()) await queueHide(on ? hideNow : showNow);
+      else input.own(!!on);
+    }
+    return snapshot();
+  },
   inputReopen() { input.reopen(); },
-  inputStop() { input.stop(); saveInput({ on: false }); return snapshot(); },
   inputWatch(on) { input.watch(!!on); },
   // a setting changed: saved, and the helper gets it at once
   inputSave(profile) {
@@ -513,32 +566,15 @@ const api = {
     if (input.running) input.configure(inputProfile());
     return snapshot();
   },
-  hidState: () => inputLib.hidState(),
-  // hide the real controller from games (Windows asks for permission)
-  async hidHide(paths) {
-    const list = (Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string' && p);
-    if (!list.length) throw new Error('Pick a controller to hide.');
-    await inputLib.hide(list);
-    saveInput({ hidden: [...new Set([...settings.get('input').hidden, ...list])] });
-    return snapshot();
-  },
-  async hidShow(paths) {
-    const list = Array.isArray(paths) && paths.length ? paths : settings.get('input').hidden;
-    if (list.length) await inputLib.show(list);
-    const gone = new Set(list.map((p) => p.toLowerCase()));
-    saveInput({ hidden: settings.get('input').hidden.filter((p) => !gone.has(p.toLowerCase())) });
-    return snapshot();
-  },
   // install the drivers OpenW comes with; a running helper starts again to use them
   async inputInstallDrivers(list) {
     const want = Array.isArray(list) ? list : ['vigem'];
-    if (want.includes('hidhide')) saveInput({ hidhideTried: true }); // optional: asked for once, not on every start
     const results = await inputLib.installDrivers(want);
     if (input.running) {
-      await input.stop();
-      input.start(inputProfile(), { own: settings.get('input').own !== false });
+      await stopInput();
+      await startInput();
     }
-    return { results, info: { status: input.status, drivers: await inputLib.drivers() }, state: snapshot() };
+    return { results, info: { status: inputStatus(), drivers: await inputLib.drivers() }, state: snapshot() };
   },
 
   async importKeys() {
@@ -609,10 +645,19 @@ app.whenReady().then(async () => {
   loadKeys();
   maps = new Maps(path.join(data, 'maps'));
   delete settings.data.steamInput; // the old Steam Input route is gone
-  input.on('status', (st) => send('input-status', st));
+  input.on('status', (st) => {
+    pushInputStatus();
+    if (st.running && st.pad) queueHide(hideNow); // a controller plugged in while running
+  });
   input.on('state', (st) => send('input-state', st));
+  // anything left hidden by an earlier run (or by 0.3's hide list) is shown again first
+  const leftover = [...(settings.get('input').autoHidden || []), ...(settings.get('input').hidden || [])];
+  if (leftover.length && !smokeShot) {
+    saveInput({ autoHidden: leftover, hidden: undefined });
+    queueHide(showNow);
+  }
   if (settings.get('input').on && !smokeShot) {
-    try { input.start(inputProfile(), { own: settings.get('input').own !== false }); } catch (e) { console.error(e.message); }
+    startInput().catch((e) => console.error(e.message)); // its hiding queues after the leftover above
   }
   // settings from an older version: bring the overlay options into the current shape
   const saved = settings.get('overlay');
@@ -677,4 +722,10 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => { if (mediaWatcher) mediaWatcher.stop(); input.stop(); });
+app.on('will-quit', () => {
+  if (mediaWatcher) mediaWatcher.stop();
+  input.stop();
+  // the real controller must not stay hidden once OpenW is gone
+  const paths = settings && settings.get('input').autoHidden;
+  if (paths && paths.length) { inputLib.showControllersSync(paths); saveInput({ autoHidden: [] }); }
+});

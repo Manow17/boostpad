@@ -23,6 +23,10 @@
 !macro customInstall
   !insertmacro openwDriver "ViGEmBus" "ViGEmBus_1.22.0_x64_x86_arm64.exe"
   !insertmacro openwDriver "HidHide" "HidHide_1.5.230_x64.exe"
+  ; HidHide attaches to a controller when it connects: restart the connected ones now, so
+  ; nobody has to unplug anything (src/main/restart-pads.ps1)
+  DetailPrint "Reconnecting game controllers..."
+  ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\resources\app\src\main\restart-pads.ps1"'
 !macroend
 
 ; Uninstalling OpenW leaves the drivers: other apps (DS4Windows, for one) may use them.

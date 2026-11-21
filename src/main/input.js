@@ -3,7 +3,7 @@
 // for the two drivers it relies on, installs them from the copies OpenW comes with
 // (drivers/), and drives HidHide, which hides the real controller from games so they see
 // only OpenW's virtual one.
-const { spawn, execFile } = require('child_process');
+const { spawn, spawnSync, execFile } = require('child_process');
 const crypto = require('crypto');
 const EventEmitter = require('events');
 const fs = require('fs');
@@ -94,6 +94,7 @@ const CLI_PLACES = [
   path.join(pf, 'Nefarius Software Solutions e.U', 'HidHide', 'x64', 'HidHideCLI.exe'),
 ];
 const hidHideCli = () => CLI_PLACES.find((p) => fs.existsSync(p)) || null;
+const hasHidHide = () => !!hidHideCli();
 
 async function drivers() {
   const [vigem, hidhide] = await Promise.all([
@@ -103,16 +104,22 @@ async function drivers() {
   return { vigem, hidhide: hidhide && !!hidHideCli(), helper: fs.existsSync(EXE), bundled: { vigem: !!bundled('vigem'), hidhide: !!bundled('hidhide') } };
 }
 
-/* ---------- HidHide ---------- */
+/* ---------- HidHide: the real controller hidden while OpenW Input runs ---------- */
 
 // HidHideCLI writes UTF-16 on some versions and UTF-8 on others.
 const decode = (buf) => (buf.length > 1 && (buf[1] === 0 || (buf[0] === 0xFF && buf[1] === 0xFE)) ? buf.toString('utf16le') : buf.toString('utf8')).replace(/^\uFEFF/, '');
-const cli = (args) => new Promise((resolve, reject) => {
-  const exe = hidHideCli();
-  if (!exe) return reject(new Error('HidHide is not installed.'));
-  execFile(exe, args, { encoding: 'buffer', windowsHide: true, timeout: 10000 }, (err, out) => (err ? reject(err) : resolve(decode(out))));
-});
-const quoted = (text) => [...text.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+// It needs no administrator rights. Its stdin must be closed, or it waits for more commands.
+function cli(args, exe = hidHideCli()) {
+  return new Promise((resolve, reject) => {
+    if (!exe) return reject(new Error('HidHide is not installed.'));
+    const p = spawn(exe, args, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    const out = [];
+    const timer = setTimeout(() => { p.kill(); reject(new Error('HidHide did not answer.')); }, 10000);
+    p.stdout.on('data', (d) => out.push(d));
+    p.on('error', (e) => { clearTimeout(timer); reject(e); });
+    p.on('exit', (code) => { clearTimeout(timer); if (code) reject(new Error(`HidHide stopped with code ${code}.`)); else resolve(decode(Buffer.concat(out))); });
+  });
+}
 
 // Every device entry in --dev-gaming's JSON, wherever it sits.
 function gamingDevices(json) {
@@ -147,22 +154,38 @@ function controllers(json, hidden) {
   }));
 }
 
-async function hidState() {
-  if (!hidHideCli()) return { installed: false, controllers: [], hidden: [], cloak: false, apps: [] };
-  const read = (args) => cli(args).catch(() => null);
-  const [gaming, list, cloak, apps] = await Promise.all([read(['--dev-gaming']), read(['--dev-list']), read(['--cloak-state']), read(['--app-list'])]);
+// Which of these devices have HidHide's filter in their driver stack. It attaches when a
+// device connects, so a controller that was plugged in before HidHide was installed cannot be
+// hidden until it reconnects (OpenW's setup restarts them for that).
+function withFilter(ids) {
+  if (!ids.length) return Promise.resolve(new Set());
+  const list = ids.map(psQuote).join(',');
+  const cmd = `foreach ($id in @(${list})) { $s = (Get-PnpDeviceProperty -InstanceId $id -KeyName DEVPKEY_Device_Stack -ErrorAction SilentlyContinue).Data -join ' '; if ($s -match 'HidHide') { $id } }`;
+  return new Promise((resolve) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { windowsHide: true, timeout: 15000 }, (err, out) => {
+    resolve(new Set(String(out || '').split(/\r?\n/).map((l) => l.trim().toLowerCase()).filter(Boolean)));
+  }));
+}
+
+// Hides every real controller from all apps except the input helper, so games only see the
+// virtual one. Returns { paths: what it hid, reconnect: names of controllers that must
+// reconnect before hiding works }, or null without HidHide.
+async function hideControllers() {
+  if (!hidHideCli()) return null;
   let json = [];
-  try { json = gaming ? JSON.parse(gaming) : []; } catch { json = []; }
-  const hidden = list ? quoted(list) : [];
-  return {
-    installed: true,
-    readable: gaming != null,
-    controllers: controllers(json, hidden),
-    hidden,
-    cloak: cloak ? /cloak-on/i.test(cloak) : null,
-    apps: apps ? quoted(apps) : [],
-    helperAllowed: apps ? quoted(apps).some((p) => p.toLowerCase() === EXE.toLowerCase()) : null,
-  };
+  try { json = JSON.parse(await cli(['--dev-gaming'])); } catch { json = []; }
+  const pads = controllers(json, []).filter((c) => !c.virtual);
+  const paths = pads.flatMap((c) => c.paths);
+  await cli(['--app-reg', EXE, ...paths.flatMap((p) => ['--dev-hide', p]), '--cloak-on']);
+  const filtered = await withFilter(paths);
+  const reconnect = pads.filter((c) => !c.paths.some((p) => filtered.has(p.toLowerCase()))).map((c) => c.name);
+  return { paths, reconnect };
+}
+// Shows them again; the sync one is for when OpenW quits.
+const showArgs = (paths) => paths.flatMap((p) => ['--dev-unhide', p]);
+const showControllers = (paths) => (paths.length && hidHideCli() ? cli(showArgs(paths)) : Promise.resolve(''));
+function showControllersSync(paths) {
+  const exe = hidHideCli();
+  if (paths.length && exe) spawnSync(exe, showArgs(paths), { stdio: 'ignore', windowsHide: true, timeout: 5000 });
 }
 
 const psQuote = (s) => `'${String(s).replace(/'/g, "''")}'`;
@@ -181,14 +204,6 @@ function runElevated(body, refused) {
     if (err) reject(new Error(refused));
     else resolve(text);
   }));
-}
-
-// Changing HidHide needs administrator rights.
-function elevated(commands) {
-  const exe = hidHideCli();
-  if (!exe) return Promise.reject(new Error('Hiding is not set up yet. Turn OpenW Input on once.'));
-  const body = `$cli = ${psQuote(exe)}\r\n${commands.map((args) => `& $cli ${args.map(psQuote).join(' ')}`).join('\r\n')}`;
-  return runElevated(body, 'Windows did not give HidHide permission, so nothing changed.');
 }
 
 /* ---------- the drivers OpenW comes with ---------- */
@@ -214,9 +229,12 @@ function bundled(which) {
 
 // The elevated script: each installer runs silently (Advanced Installer: /exenoui /qn), and
 // its exit code goes to $out as JSON.
+// After HidHide, the connected controllers restart so its filter attaches at once.
+const RESTART_PADS = path.join(__dirname, 'restart-pads.ps1');
 const installScript = (files) => [
   '$codes = @{}',
   ...files.map(([w, f]) => `$p = Start-Process -FilePath ${psQuote(f)} -ArgumentList '/exenoui','/qn','/norestart' -Wait -PassThru; $codes[${psQuote(w)}] = $p.ExitCode`),
+  ...(files.some(([w]) => w === 'hidhide') ? [`if ($codes['hidhide'] -in 0,1638,3010,1641) { & ${psQuote(RESTART_PADS)} }`] : []),
   '$codes | ConvertTo-Json | Set-Content -Encoding utf8 -Path $out',
 ].join('\r\n');
 
@@ -238,4 +256,4 @@ async function installDrivers(list) {
 const hide = (paths) => elevated([['--app-reg', EXE], ...paths.map((p) => ['--dev-hide', p]), ['--cloak-on']]);
 const show = (paths) => elevated(paths.map((p) => ['--dev-unhide', p]));
 
-module.exports = { Input, EXE, DRIVERS, drivers, bundled, installDrivers, installScript, psQuote, hidState, hide, show, controllers, gamingDevices, decode };
+module.exports = { Input, EXE, DRIVERS, drivers, bundled, installDrivers, installScript, psQuote, hasHidHide, hideControllers, showControllers, showControllersSync, controllers, gamingDevices, decode };

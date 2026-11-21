@@ -607,6 +607,7 @@ function makeEngine(cooked, running = { value: false }) {
     const parse = `$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile(${inputLib.psQuote(file)}, [ref]$null, [ref]$e); $e.Count`;
     assert.strictEqual(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', parse], { encoding: 'utf8' }).trim(), '0');
     assert.ok(script.includes("'/exenoui','/qn','/norestart'"));
+    assert.ok(script.includes('restart-pads.ps1') && fs.existsSync(path.join(__dirname, '..', 'src', 'main', 'restart-pads.ps1')), 'controllers restart after HidHide');
   });
 
   await runAll();
