@@ -1,8 +1,10 @@
 // OpenW Input from the main process: runs the helper (bin/openw-input.exe, built from
 // native/openw-input.cpp), hands it the profile, and passes on what it reports. Also checks
-// for the two drivers it relies on and drives HidHide, which hides the real controller from
-// games so they see only OpenW's virtual one.
+// for the two drivers it relies on, installs them from the copies OpenW comes with
+// (drivers/), and drives HidHide, which hides the real controller from games so they see
+// only OpenW's virtual one.
 const { spawn, execFile } = require('child_process');
+const crypto = require('crypto');
 const EventEmitter = require('events');
 const fs = require('fs');
 const os = require('os');
@@ -69,12 +71,15 @@ class Input extends EventEmitter {
   own(on) { this.write(`own ${on ? 1 : 0}`); }
   reopen() { this.write('reopen'); }
 
+  // resolves once the helper has quit
   stop() {
     const proc = this.proc;
-    if (!proc) return;
+    if (!proc) return Promise.resolve();
+    const gone = new Promise((resolve) => proc.once('exit', resolve));
     this.write('quit');
     proc.stdin.end();
     setTimeout(() => { if (proc.exitCode == null) proc.kill(); }, 1500);
+    return gone;
   }
 }
 
@@ -95,7 +100,7 @@ async function drivers() {
     regKey('HKLM\\SYSTEM\\CurrentControlSet\\Services\\ViGEmBus'),
     regKey('HKLM\\SYSTEM\\CurrentControlSet\\Services\\HidHide'),
   ]);
-  return { vigem, hidhide: hidhide && !!hidHideCli(), helper: fs.existsSync(EXE) };
+  return { vigem, hidhide: hidhide && !!hidHideCli(), helper: fs.existsSync(EXE), bundled: { vigem: !!bundled('vigem'), hidhide: !!bundled('hidhide') } };
 }
 
 /* ---------- HidHide ---------- */
@@ -160,25 +165,77 @@ async function hidState() {
   };
 }
 
-// Changing HidHide needs administrator rights: the commands run in one elevated PowerShell,
-// so Windows asks once.
+const psQuote = (s) => `'${String(s).replace(/'/g, "''")}'`;
+
+// Runs a PowerShell script with administrator rights, so Windows asks once. The script can
+// write $out (a file); its text comes back.
+function runElevated(body, refused) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openw-admin-'));
+  const script = path.join(dir, 'run.ps1'), out = path.join(dir, 'out.txt');
+  fs.writeFileSync(script, `\uFEFF$out = ${psQuote(out)}\r\n${body}\r\n`, 'utf8');
+  const start = `Start-Process -FilePath powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',${psQuote(`"${script}"`)}`;
+  return new Promise((resolve, reject) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', start], { windowsHide: true }, (err) => {
+    let text = '';
+    try { text = fs.readFileSync(out, 'utf8').replace(/^\uFEFF/, ''); } catch { /* nothing written */ }
+    fs.rmSync(dir, { recursive: true, force: true });
+    if (err) reject(new Error(refused));
+    else resolve(text);
+  }));
+}
+
+// Changing HidHide needs administrator rights.
 function elevated(commands) {
   const exe = hidHideCli();
   if (!exe) return Promise.reject(new Error('HidHide is not installed.'));
-  const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openw-hidhide-'));
-  const script = path.join(dir, 'hidhide.ps1');
-  fs.writeFileSync(script, `$cli = ${q(exe)}\r\n${commands.map((args) => `& $cli ${args.map(q).join(' ')}`).join('\r\n')}\r\n`, 'utf8');
-  const start = `Start-Process -FilePath powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',${q(`"${script}"`)}`;
-  return new Promise((resolve, reject) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', start], { windowsHide: true }, (err) => {
-    fs.rmSync(dir, { recursive: true, force: true });
-    if (err) reject(new Error('Windows did not give HidHide permission, so nothing changed.'));
-    else resolve();
-  }));
+  const body = `$cli = ${psQuote(exe)}\r\n${commands.map((args) => `& $cli ${args.map(psQuote).join(' ')}`).join('\r\n')}`;
+  return runElevated(body, 'Windows did not give HidHide permission, so nothing changed.');
+}
+
+/* ---------- the drivers OpenW comes with ---------- */
+
+// Nefarius Software Solutions' own signed installers, as published on GitHub (drivers/README.md).
+const DRIVER_DIR = path.join(__dirname, '..', '..', 'drivers');
+const DRIVERS = {
+  vigem: { name: 'ViGEmBus', file: 'ViGEmBus_1.22.0_x64_x86_arm64.exe', sha256: '89220a7865076b342892f98865f3499fb7c4cfd673159e89d352c360fd014c6a' },
+  hidhide: { name: 'HidHide', file: 'HidHide_1.5.230_x64.exe', sha256: 'f4bbbcb82e6258641b887c74bc81c4c5f66e4aa811808dfc304347687b7605f6' },
+};
+// Windows Installer exit codes: done, done after a restart, or a version already there.
+const DONE = { 0: 'installed', 1638: 'installed', 3010: 'restart', 1641: 'restart' };
+
+// The bundled installer, if it is there and unchanged.
+function bundled(which) {
+  const d = DRIVERS[which];
+  if (!d) return null;
+  const file = path.join(DRIVER_DIR, d.file);
+  if (!fs.existsSync(file)) return null;
+  const hash = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  return hash === d.sha256 ? file : null;
+}
+
+// The elevated script: each installer runs silently (Advanced Installer: /exenoui /qn), and
+// its exit code goes to $out as JSON.
+const installScript = (files) => [
+  '$codes = @{}',
+  ...files.map(([w, f]) => `$p = Start-Process -FilePath ${psQuote(f)} -ArgumentList '/exenoui','/qn','/norestart' -Wait -PassThru; $codes[${psQuote(w)}] = $p.ExitCode`),
+  '$codes | ConvertTo-Json | Set-Content -Encoding utf8 -Path $out',
+].join('\r\n');
+
+// Installs the drivers without their own windows (Windows still asks for permission, once).
+// Returns { vigem: 'installed' | 'restart' | 'failed' , ... }.
+async function installDrivers(list) {
+  const want = [...new Set(list)].filter((w) => DRIVERS[w]);
+  if (!want.length) return {};
+  const files = want.map((w) => [w, bundled(w)]);
+  const broken = files.find(([, f]) => !f);
+  if (broken) throw new Error(`The ${DRIVERS[broken[0]].name} installer that came with OpenW is missing or changed, so it was not run.`);
+  const text = await runElevated(installScript(files), 'Windows did not give permission, so no driver was installed.');
+  let codes = {};
+  try { codes = JSON.parse(text); } catch { /* nothing reported */ }
+  return Object.fromEntries(want.map((w) => [w, DONE[codes[w]] || `failed (${codes[w] ?? 'no answer'})`]));
 }
 
 // Hide these device paths from every app except the input helper.
 const hide = (paths) => elevated([['--app-reg', EXE], ...paths.map((p) => ['--dev-hide', p]), ['--cloak-on']]);
 const show = (paths) => elevated(paths.map((p) => ['--dev-unhide', p]));
 
-module.exports = { Input, EXE, drivers, hidState, hide, show, controllers, gamingDevices, decode };
+module.exports = { Input, EXE, DRIVERS, drivers, bundled, installDrivers, installScript, psQuote, hidState, hide, show, controllers, gamingDevices, decode };

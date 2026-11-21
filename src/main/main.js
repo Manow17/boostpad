@@ -529,9 +529,14 @@ const api = {
     saveInput({ hidden: settings.get('input').hidden.filter((p) => !gone.has(p.toLowerCase())) });
     return snapshot();
   },
-  openDriverPage(which) {
-    const URLS = { vigem: 'https://github.com/nefarius/ViGEmBus/releases/latest', hidhide: 'https://github.com/nefarius/HidHide/releases/latest' };
-    if (URLS[which]) shell.openExternal(URLS[which]);
+  // install the drivers OpenW comes with; a running helper starts again to use them
+  async inputInstallDrivers(list) {
+    const results = await inputLib.installDrivers(Array.isArray(list) ? list : ['vigem']);
+    if (input.running) {
+      await input.stop();
+      input.start(inputProfile(), { own: settings.get('input').own !== false });
+    }
+    return { results, info: { status: input.status, drivers: await inputLib.drivers() } };
   },
 
   async importKeys() {

@@ -692,6 +692,18 @@ function shownSources() {
   return k === 'edge' ? all : all.slice(0, 17);
 }
 async function refreshInput() { ctl.info = await api('inputInfo'); if (ui.tab === 'controller') render(); }
+// Installs drivers that came with OpenW. Windows asks for permission; failures throw (run() shows them).
+async function installDrivers(list) {
+  const names = { vigem: 'ViGEmBus', hidhide: 'HidHide' };
+  toast(`Installing ${list.map((w) => names[w]).join(' and ')}. Windows asks for permission.`);
+  const { results, info } = await api('inputInstallDrivers', list);
+  ctl.info = info; ctl.hid = null;
+  const failed = Object.entries(results).filter(([, r]) => r.startsWith('failed'));
+  if (failed.length) throw new Error(`${failed.map(([w, r]) => `${names[w]} ${r}`).join(', ')}. Nothing else changed.`);
+  if (Object.values(results).includes('restart')) toast('Installed. Restart Windows to finish it.');
+  else toast('Installed.');
+  if (ui.tab === 'controller') render();
+}
 window.openw.on('input-status', (st) => { if (ctl.info) { ctl.info.status = st; if (ui.tab === 'controller') render(); } });
 window.openw.on('input-state', (st) => { ctl.live = st; if (ctlLive()) ctl.ui.draw(); });
 // stop the live feed when the page is left
@@ -782,14 +794,20 @@ views.controller = () => {
   const vText = st.vigem === false ? 'No virtual controller: ViGEmBus is not installed.' : st.vigem ? 'Virtual Xbox controller is on.' : 'Starting…';
   root.append(tile(`s12 bar${st.running ? ' ink' : ''}`, art('OpenW Input', 'stick'),
     h('div', { class: 'grow' }, h('b', {}, 'OpenW Input'), h('div', { class: 'muted small' }, st.running ? `${padText} ${vText}` : st.error || 'Off. Turn it on to play with these settings.')),
-    toggle(st.running, (v) => run(async () => { const r = await api(v ? 'inputStart' : 'inputStop'); ctl.info = await api('inputInfo'); return r; }, v ? 'OpenW Input is on.' : 'OpenW Input is off.'))));
+    toggle(st.running, (v) => run(async () => {
+      if (v && !dr.vigem && dr.bundled && dr.bundled.vigem) await installDrivers(['vigem']); // first time: put the driver in
+      const r = await api(v ? 'inputStart' : 'inputStop');
+      ctl.info = await api('inputInfo');
+      return r;
+    }, v ? 'OpenW Input is on.' : 'OpenW Input is off.'))));
 
   if (!dr.vigem || !dr.helper) {
-    const drv = (ok, title, text, which, optional) => h('div', { class: 'opt-row' }, h('span', { class: `tag${ok ? ' on' : optional ? '' : ' bad'}` }, ok ? 'Installed' : optional ? 'Optional' : 'Missing'),
-      lbl(title, text, true), !ok && h('button', { class: 'btn sm', onclick: () => api('openDriverPage', which) }, 'Download page'));
+    const has = dr.bundled || {};
+    const drv = (ok, title, text, which, optional) => h('div', { class: 'opt-row' }, h('span', { class: `tag${ok ? ' on' : optional ? '' : ' bad'}` }, ok ? 'Installed' : optional ? 'Optional' : 'Not installed'),
+      lbl(title, text, true), !ok && has[which] && h('button', { class: `btn sm${optional ? '' : ' primary'}`, onclick: () => run(() => installDrivers([which])) }, 'Install'));
     root.append(tile('s12 ctl', head('Drivers', h('button', { class: 'btn sm', onclick: () => run(async () => { ctl.hid = null; await refreshInput(); }) }, 'Check again')),
-      h('p', { class: 'muted' }, 'Windows only lets a driver signed by Microsoft add a controller, and Rocket League’s anti-cheat will not run with unsigned drivers allowed, so OpenW cannot make its own. ViGEmBus is the free, signed one DS4Windows uses. Download it from its GitHub page, install it, then press Check again.'),
-      drv(dr.vigem, 'ViGEmBus', 'Makes the virtual Xbox controller the game plays with. Needed.', 'vigem'),
+      h('p', { class: 'muted' }, 'OpenW comes with the drivers it needs: nothing to download. Installing takes a few seconds, and Windows asks for permission once (no app can skip that for a driver). They are the free, signed drivers by Nefarius Software Solutions that DS4Windows uses; remove them any time under Windows Settings, Apps.'),
+      drv(dr.vigem, 'ViGEmBus', 'Makes the virtual Xbox controller the game plays with. Needed; also installed when you first turn OpenW Input on.', 'vigem'),
       drv(dr.hidhide, 'HidHide', 'Only for Xbox controllers, or when another app keeps your controller open. PlayStation controllers can be hidden without it (Hide real controller).', 'hidhide', true),
       !dr.helper && h('p', { class: 'small' }, 'The input helper (bin/openw-input.exe) is missing from this copy of OpenW. Build it with npm run build-input.')));
   }
@@ -942,8 +960,8 @@ function ownTile(st, inp) {
 function hideSection(dr, inp) {
   if (!dr.hidhide) {
     return tile('s12 ctl', head('Hide with HidHide', h('span', { class: 'tag' }, 'Optional')),
-      h('p', { class: 'muted' }, 'Only needed for Xbox controllers, or when another app keeps your PlayStation controller open. HidHide is a free, signed driver that hides a controller from every app except OpenW Input, until you show it again. Install it yourself, then press Check again under Drivers.'),
-      h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => api('openDriverPage', 'hidhide') }, 'Download page')));
+      h('p', { class: 'muted' }, 'Only needed for Xbox controllers, or when another app keeps your PlayStation controller open. HidHide is a free, signed driver that hides a controller from every app except OpenW Input, until you show it again. OpenW comes with it; Windows may want a restart afterwards.'),
+      dr.bundled && dr.bundled.hidhide && h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => run(() => installDrivers(['hidhide'])) }, 'Install HidHide')));
   }
   if (!ctl.hid) {
     api('hidState').then((s) => { ctl.hid = s; if (ui.tab === 'controller') render(); }).catch((e) => { ctl.hid = { controllers: [], hidden: [], readable: false }; toast(String(e.message || e), true); });

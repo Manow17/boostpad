@@ -597,6 +597,18 @@ function makeEngine(cooked, running = { value: false }) {
     assert.strictEqual(inputLib.decode(Buffer.from('﻿--cloak-on', 'utf16le')), '--cloak-on');
   });
 
+  test('input: the driver installers OpenW comes with are intact, and the install script is valid PowerShell', () => {
+    const { execFileSync } = require('child_process');
+    for (const w of Object.keys(inputLib.DRIVERS)) assert.ok(inputLib.bundled(w), `${inputLib.DRIVERS[w].file} is missing or changed`);
+    const files = Object.keys(inputLib.DRIVERS).map((w) => [w, inputLib.bundled(w)]);
+    const script = `$out = ${inputLib.psQuote(path.join(tmp, "it's out.txt"))}\r\n${inputLib.installScript(files)}`;
+    const file = path.join(tmp, 'install.ps1');
+    fs.writeFileSync(file, script);
+    const parse = `$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile(${inputLib.psQuote(file)}, [ref]$null, [ref]$e); $e.Count`;
+    assert.strictEqual(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', parse], { encoding: 'utf8' }).trim(), '0');
+    assert.ok(script.includes("'/exenoui','/qn','/norestart'"));
+  });
+
   await runAll();
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(`\n${passed} passed, ${skipped} skipped${process.exitCode ? ', FAILURES above' : ''}`);
