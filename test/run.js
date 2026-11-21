@@ -372,6 +372,24 @@ function makeEngine(cooked, running = { value: false }) {
     assert.deepStrictEqual(b, { F2: ['togglemenu settings'], XboxTypeS_DPad_Up: ['default_up'], XboxTypeS_LeftThumbStick: ['cpt_freeze'] });
   });
 
+  test('ground under the new pitch is lowered, even when it has no position of its own', () => {
+    const keysFile = path.join(process.env.APPDATA || '', 'boostpad', 'keys.txt');
+    const file = path.join(real || '', 'Outlaw_Oasis_OOB.upk');
+    if (!fs.existsSync(keysFile) || !fs.existsSync(file)) return;
+    const keys = upk.parseKeys(fs.readFileSync(keysFile, 'utf8'));
+    const backup = path.join(process.env.APPDATA, 'boostpad', 'backups', 'outlaw_oasis_oob.upk');
+    const buf = fs.readFileSync(fs.existsSync(backup) ? backup : file);
+    const P = mapbuild.open(buf, keys);
+    const before = mapbuild.inventory(P).find((i) => i.name === 'OL_Terrain_Ground_Main');
+    const pitch = [{ x0: -4700, x1: 4700, y0: -6400, y1: 6400 }];
+    const stats = mapbuild.keepSide(P, 'surroundings', { region: pitch, clear: pitch, part: true, lights: true });
+    assert.strictEqual(stats.lowered, 1);
+    const again = mapbuild.open(mapbuild.repack(P, Buffer.from(upk.DEFAULT_KEYS[0], 'hex')), keys);
+    const after = mapbuild.inventory(again).find((i) => i.name === 'OL_Terrain_Ground_Main');
+    assert.strictEqual(Math.round(after.box.c.z), Math.round(before.box.c.z) - 25);
+    assert.strictEqual(again.t.exports.length, P.t.exports.length);
+  }, !real);
+
   test('a map is taken apart and put back together without changing anything else', () => {
     const keysFile = path.join(process.env.APPDATA || '', 'boostpad', 'keys.txt');
     const file = path.join(real || '', 'Farm_GRS_P.upk');

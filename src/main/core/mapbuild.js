@@ -138,6 +138,58 @@ function levelActors(P) {
   return { d, at: at + 4, count };
 }
 
+/* ---------- moving a piece ---------- */
+
+// Properties that only matter in the editor or for baking: dropped to make room when a
+// component needs a Translation it does not have.
+const SPARE_PROPS = ['PreviewEnvironmentShadowing', 'bOverrideLightMapRes', 'OverriddenLightMapRes', 'bUseAsOccluder', 'TickGroup'];
+
+/**
+ * Moves a component up or down by dz, in place. With a Translation property, its z changes.
+ * Without one (meshes placed in world space), the property block is rewritten at the same size:
+ * a Translation is added, spare properties make room, and whatever is left is filled with a
+ * property of a name the game does not know, which it skips. Returns false if it cannot.
+ */
+function shiftZ(P, d, dz) {
+  const r = tagged(P, d);
+  if (!r) return false;
+  const tr = prop(r, 'Translation');
+  if (tr && tr.size === 12) { d.writeFloatLE(d.readFloatLE(tr.at + 8) + dz, tr.at + 8); return true; }
+  const idx = (n) => P.t.pkg.names.findIndex((x) => x.text === n);
+  const [iTrans, iStruct, iVector, iArray] = ['Translation', 'StructProperty', 'Vector', 'ArrayProperty'].map(idx);
+  if ([iTrans, iStruct, iVector, iArray].some((i) => i < 0)) return false;
+  const start = r.props.length ? r.props[0].at - tagHeader(P, d, r.props[0]) : r.end - 8;
+  const pieces = r.props.map((p) => ({ name: p.name, bytes: d.subarray(p.at - tagHeader(P, d, p), p.at + p.size) }));
+  const total = r.end - start; // the property block, None included
+  const tag = Buffer.alloc(44);
+  tag.writeInt32LE(iTrans, 0); tag.writeInt32LE(iStruct, 8); tag.writeInt32LE(12, 16); tag.writeInt32LE(iVector, 24);
+  tag.writeFloatLE(0, 32); tag.writeFloatLE(0, 36); tag.writeFloatLE(dz, 40);
+  const none = d.subarray(r.end - 8, r.end);
+  let keep = pieces;
+  const size = (list) => list.reduce((s, p) => s + p.bytes.length, 0) + tag.length + none.length;
+  for (const spare of SPARE_PROPS) {
+    const left = total - size(keep);
+    if (left === 0 || left >= 24) break;
+    keep = keep.filter((p) => p.name !== spare);
+  }
+  const left = total - size(keep);
+  if (left !== 0 && left < 24) return false;
+  const filler = Buffer.alloc(left);
+  if (left) {
+    // an ArrayProperty tag with a name that is no property: the game skips its bytes
+    filler.writeInt32LE(P.t.pkg.names.findIndex((x) => x.text === 'Boostpad') >= 0 ? idx('Boostpad') : iVector, 0);
+    filler.writeInt32LE(iArray, 8); filler.writeInt32LE(left - 24, 16);
+  }
+  const block = Buffer.concat([...keep.map((p) => Buffer.from(p.bytes)), tag, filler, Buffer.from(none)]);
+  if (block.length !== total) return false;
+  block.copy(d, start);
+  return true;
+}
+// Bytes of a property's tag before its value.
+function tagHeader(P, d, p) {
+  return 24 + (p.type === 'StructProperty' || p.type === 'ByteProperty' ? 8 : 0) + (p.type === 'BoolProperty' ? 1 : 0);
+}
+
 /* ---------- where things are ---------- */
 
 // Placement of a component: Translation, Rotation (yaw is what matters for a stadium) and scale.
@@ -193,6 +245,7 @@ function inventory(P) {
         items.push({
           kind: sm ? 'mesh' : 'particles', name, box: local ? worldBox(local, pl) : { c: pl.t, e: { x: 0, y: 0, z: 0 } }, known: !!local || !!prop(cr, 'Translation'),
           hide: () => cd.writeInt32LE(0, slot.at),
+          move: (dz) => shiftZ(P, cd, dz),
         });
       }
       continue;
@@ -211,6 +264,7 @@ function inventory(P) {
 // count the park as stadium.
 const STANDS = /stand|bleach|seat|tribune|grandstand|crowd|people|audience|spectator|_roof|backwall/i;
 const SKY = /sky|cloud|sunplane|sun_?disc|moon|horizon|fog|backdrop|skyline|stars?_|aurora|borealis/i;
+const GROUND_DROP = 25; // how far the place arena's ground under the pitch is lowered
 const SKY_HEIGHT = 4500; // a placed actor above this (the crossbar is at 642, the ceiling at 2044) is sky
 const NEVER_STADIUM = /OOB/i;
 const STADIUM_PART = /stadium|arena|coliseum/i;
@@ -302,7 +356,8 @@ function keepSide(P, side, { region = DEFAULT_REGION, clear = [], gameplay = sid
       // outside side: an actor goes when it stands in this arena's stands or on its pitch, or where the new stadium goes
       else keep = !!it.box && !inStands(it.box.c, region) && !inRegion(it.box.c, pitchOnly(region)) && !inRegion(it.box.c, clear);
     } else if (SKY.test(it.name)) {
-      keep = side === 'surroundings';
+      // sky and fog come from the place arena, except fog that belongs to its stadium ("Field_Fog" over its pitch)
+      keep = side === 'surroundings' && !(STADIUM_WORDS.test(it.name) && it.box && inRegion(it.box.c, region));
     } else if (/collision/i.test(it.name)) {
       keep = gameplay; // collision comes with the gameplay, from one map only
     } else if (!it.known) {
@@ -332,6 +387,11 @@ function keepSide(P, side, { region = DEFAULT_REGION, clear = [], gameplay = sid
       const huge = !flat(it.box) && (it.box.e.x > clearReach.x * 1.2 || it.box.e.y > clearReach.y * 1.2);
       const clash = huge ? mostlyIn(it.box, clear) : inRegion(it.box.c, clear) || mostlyIn(it.box, clear);
       keep = ground || (!ownStadium && !clash);
+      // ground that runs under the pitch often has this arena's own pitch painted on it, at the same
+      // height as the new one: lowered a little, the new pitch is always drawn on top
+      if (keep && ground && Math.abs(g.c.x) - g.e.x < 4096 && Math.abs(g.c.y) - g.e.y < 5120 && g.c.z + g.e.z > -20) {
+        if (it.move && it.move(-GROUND_DROP)) stats.lowered = (stats.lowered || 0) + 1;
+      }
     }
     if (!keep) it.hide();
     stats[keep ? 'kept' : 'hidden']++;
