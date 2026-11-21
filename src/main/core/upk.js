@@ -255,7 +255,7 @@ function readTables(buf, extraKeys = []) {
     }
     chunks.push({ ...entry(p), at: p }); // `at`: where the entry is in the decrypted block
   }
-  return { names, exports, chunks, pkg };
+  return { names, imports, exports, chunks, pkg };
 }
 
 // One compressed chunk: tag, block size, sizes, a table of blocks, then zlib blocks.

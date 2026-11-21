@@ -210,7 +210,8 @@ function inventory(P) {
 // only behind the goals and open park along the sides, so one box around everything would
 // count the park as stadium.
 const STANDS = /stand|bleach|seat|tribune|grandstand|crowd|people|audience|spectator|_roof|backwall/i;
-const SKY = /sky|cloud|sunplane|sun_?disc|moon|horizon|fog|backdrop|skyline|stars?_/i;
+const SKY = /sky|cloud|sunplane|sun_?disc|moon|horizon|fog|backdrop|skyline|stars?_|aurora|borealis/i;
+const SKY_HEIGHT = 4500; // a placed actor above this (the crossbar is at 642, the ceiling at 2044) is sky
 const NEVER_STADIUM = /OOB/i;
 const STADIUM_PART = /stadium|arena|coliseum/i;
 const PITCH = { x: 4700, y: 6400 }; // half sizes: walls at 4096 x 5120, goals 880 deep, a little room
@@ -291,7 +292,9 @@ function keepSide(P, side, { region = DEFAULT_REGION, clear = [], gameplay = sid
     if (side === 'empty') {
       keep = false; // a part that must load nothing
     } else if (it.kind === 'actor') {
-      if (it.cls === 'InstancedFoliageActor') keep = side === 'surroundings';
+      if (/Foliage/.test(it.cls)) keep = side === 'surroundings'; // trees and plants are scenery
+      // something hanging high above the pitch (a moon glow, a sky sprite) is sky, not stadium
+      else if (side === 'stadium' && it.box && it.box.c.z > SKY_HEIGHT && !GAMEPLAY.test(it.cls)) keep = false;
       else if (GAMEPLAY.test(it.cls)) keep = gameplay;
       else if (ATMOSPHERE.test(it.cls)) keep = side === 'surroundings';
       else if (LIGHTS.test(it.cls)) keep = keepLights;
@@ -307,13 +310,18 @@ function keepSide(P, side, { region = DEFAULT_REGION, clear = [], gameplay = sid
       // file (fish, birds, weather) it is outside
       keep = side === 'stadium' ? !part : part;
     } else if (side === 'stadium') {
-      // flat ground centred in the stadium stays too, so the stands do not stand over a hole;
-      // a piece named after the stadium that sticks out past the stands (outer arches) stays too
+      // a piece named after the stadium that sticks out past the stands (outer arches) stays too.
+      // Ground is the place arena's: flat ground running out of the stadium would lie on top of it and flicker.
       const named = STADIUM_PART.test(it.name) && !flat(it.box) && Math.abs(it.box.c.x) <= own.x && Math.abs(it.box.c.y) <= own.y;
-      keep = !NEVER_STADIUM.test(it.name) && (mostlyIn(it.box, region) || (flat(it.box) && inRegion(it.box.c, region)) || named);
+      keep = !NEVER_STADIUM.test(it.name) && (mostlyIn(it.box, region) || named);
     } else {
       // big flat ground that runs under the other stadium stays when it lies below the pitch
-      const ground = flat(it.box) && it.box.c.z + it.box.e.z <= 0 && (it.box.e.x > reach.x || it.box.e.y > reach.y);
+      // This arena's ground stays: every standard arena's ground is shaped around the same pitch, so it
+      // fits under any stadium (Deadeye Canyon's terrain runs right up to the walls; without it the dark
+      // plane under it shows). Ground is low and thin and reaches past the pitch; the pitch itself goes.
+      const g = it.box;
+      const ground = g.e.z < 300 && g.c.z - g.e.z < 100 && g.c.z + g.e.z < 600 && (g.e.x > PITCH.x || g.e.y > PITCH.y)
+        && !mostlyIn(g, pitchOnly(region)) && !STADIUM_WORDS.test(it.name);
       // this arena's own stadium: what sits in its stands, its pitch, and pieces named after its stadium
       const ownStadium = !NEVER_STADIUM.test(it.name) && (mostlyInStands(it.box, region) || mostlyIn(it.box, pitchOnly(region))
         || (STADIUM_WORDS.test(it.name) && Math.abs(it.box.c.x) <= own.x && Math.abs(it.box.c.y) <= own.y));
