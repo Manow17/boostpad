@@ -78,11 +78,14 @@ class Engine {
     if (op.kind === 'file') return fs.readFileSync(op.from);
     if (op.kind === 'build') {
       if (!op.from || path.basename(op.from) !== op.from) throw new EngineError('BAD_OP', 'Invalid source file name');
-      if (!['stadium', 'surroundings'].includes(op.side)) throw new EngineError('BAD_OP', 'Invalid side');
+      if (!['stadium', 'surroundings', 'empty'].includes(op.side)) throw new EngineError('BAD_OP', 'Invalid side');
       const from = this.pristine(op.from);
       if (!fs.existsSync(from)) throw new EngineError('NO_SUCH_GAME_FILE', `${op.from} is not in the game folder`);
       const pkg = mapbuild.open(fs.readFileSync(from), this.getKeys());
-      mapbuild.keepSide(pkg, op.side);
+      mapbuild.keepSide(pkg, op.side, {
+        region: op.region || mapbuild.DEFAULT_REGION, clear: op.clear || [],
+        gameplay: op.gameplay === undefined ? op.side === 'stadium' : !!op.gameplay, part: !!op.part,
+      });
       // a file the game has never had is read with the game's common key
       const key = op.create ? Buffer.from(upk.DEFAULT_KEYS[0], 'hex') : this.destinationKey(op.gameFile);
       return mapbuild.repack(pkg, key || pkg.t.pkg.key, op.renames || {});

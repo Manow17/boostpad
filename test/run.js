@@ -200,36 +200,47 @@ function makeEngine(cooked, running = { value: false }) {
     const park = arena('park_p', 'Beckwith Park', ['Park_SFX.upk']);
     const hoops = arena('hoopsstadium_p', 'Dunk House', [], false);
     const all = [beach, cs, tenth, dusk, park, hoops];
-    const pairs = (p) => p.ops.map((o) => `${o.gameFile}<-${o.sourceGameFile}`);
-    // built merges: [file, from, side, created], and the renames of the main file
-    const built = (p) => p.ops.map((o) => [/^BP[0-9a-f]+\.upk$/.test(o.gameFile) ? 'new' : o.gameFile, o.from, o.side, !!o.create]);
+    // built merges: [file, from, side, created, gameplay], and the renames of the main file
+    const built = (p) => p.ops.map((o) => [/^BP[0-9a-f]+\.upk$/.test(o.gameFile) ? 'new' : o.gameFile, o.from, o.side, !!o.create, !!o.gameplay]);
     const renamed = (p) => Object.keys(p.ops[p.ops.length - 1].renames);
-    // both have a stadium part: the stadium is swapped, play the other arena
-    let p = arenas.mergePlan(beach, cs, all);
-    assert.deepStrictEqual([p.how, pairs(p), p.play.map((a) => a.id)], ['stadium', ['CS_Field.upk<-Beach_Field.upk'], ['cs_p']]);
-    // a single-file stadium: its map loads the other arena's surroundings in place of its own outside
-    // parts (and, when more are needed, its sound part); the main file is written last
-    p = arenas.mergePlan(dusk, beach, all);
+    const R = [{ x0: -6000, x1: 6000, y0: -8000, y1: 8000 }];
+    // a one-file stadium arena: its map is the base (gameplay and only its stadium), its outside parts
+    // and then its sound part load the place's outside instead; the main file is written last
+    let p = arenas.mergePlan(dusk, beach, all);
     assert.deepStrictEqual([p.how, p.play.map((a) => a.id)], ['build', ['beach_p']]);
     assert.deepStrictEqual(built(p), [
-      ['new', 'Beach_OOB.upk', 'surroundings', true], ['new', 'Beach_OOB2.upk', 'surroundings', true], ['new', 'beach_p.upk', 'surroundings', true],
-      ['beach_p.upk', 'ff_dusk_p.upk', 'stadium', false]]);
+      ['new', 'Beach_OOB.upk', 'surroundings', true, false], ['new', 'Beach_OOB2.upk', 'surroundings', true, false], ['new', 'beach_p.upk', 'surroundings', true, false],
+      ['beach_p.upk', 'ff_dusk_p.upk', 'stadium', false, true]]);
     assert.deepStrictEqual(renamed(p), ['FF_Dusk_OOB', 'FF_Dusk_BlueOOB', 'FF_Dusk_SFX']);
     assert.match(p.note, /background sounds/);
-    // fewer surroundings than slots: a left-over outside part keeps only its stadium side; the sound part stays
+    // fewer outside sources than slots: the sound part stays as it is
     p = arenas.mergePlan(dusk, tenth, all);
     assert.deepStrictEqual(built(p), [
-      ['new', 'stadium_10a_p.upk', 'surroundings', true], ['new', 'Stadium_10A_OOB.upk', 'surroundings', true],
-      ['stadium_10a_p.upk', 'ff_dusk_p.upk', 'stadium', false]]);
+      ['new', 'stadium_10a_p.upk', 'surroundings', true, false], ['new', 'Stadium_10A_OOB.upk', 'surroundings', true, false],
+      ['stadium_10a_p.upk', 'ff_dusk_p.upk', 'stadium', false, true]]);
     p = arenas.mergePlan(tenth, park, all);
-    assert.deepStrictEqual(built(p), [['new', 'park_p.upk', 'surroundings', true], ['park_p.upk', 'stadium_10a_p.upk', 'stadium', false]]);
+    assert.deepStrictEqual(built(p), [['new', 'park_p.upk', 'surroundings', true, false], ['park_p.upk', 'stadium_10a_p.upk', 'stadium', false, true]]);
     assert.ok(p.ops.every((o) => !o.create || o.gameFile.length - 4 <= 'Stadium_10A_OOB'.length), 'new names fit in the slot they replace');
-    // an arena with its own stadium file keeps its outside parts (part of its stands are there), so only
-    // a sound or effects part can be a slot; with none, the whole arena is played instead
-    p = arenas.mergePlan(cs, tenth, all);
-    assert.deepStrictEqual([p.how, pairs(p)], ['whole', ['stadium_10a_p.upk<-cs_p.upk']]);
+    // a newer stadium arena keeps part of its stands in its outside parts: one that holds some keeps only
+    // that (stadium side), one that holds none is free for the place's outside; its stadium file loads as it is
+    p = arenas.mergePlan(beach, cs, all, { stadiumRegion: R, placeRegion: R, free: new Set(['beach_oob.upk']) });
+    assert.deepStrictEqual(built(p), [
+      ['new', 'CS_OOB.upk', 'surroundings', true, false], ['new', 'Beach_OOB2.upk', 'stadium', true, false], ['cs_p.upk', 'beach_p.upk', 'stadium', false, true]]);
+    assert.match(p.note, /2 parts of Champions Field/);
+    assert.ok(p.ops.every((o) => o.side === 'stadium' ? o.region === R : o.clear === R), 'the place keeps nothing inside the other stadium');
+    // no free part at all: nothing can be merged (never the whole arena: that would show its outside)
+    assert.strictEqual(arenas.mergePlan(cs, tenth, all).how, 'none');
     p = arenas.mergePlan(park, beach, all);
     assert.deepStrictEqual([p.how, renamed(p)], ['build', ['Park_SFX']]);
+    // a stadium arena with no parts: the place's map is the base (its gameplay, only its outside), and
+    // its stadium file or sound part loads the stadium arena's stadium
+    const mann = arena('eurostadium_p', 'Mannfield', []);
+    p = arenas.mergePlan(mann, cs, [...all, mann]);
+    assert.deepStrictEqual(built(p), [
+      ['new', 'eurostadium_p.upk', 'stadium', true, false], ['new', 'CS_OOB.upk', 'surroundings', true, false], ['new', 'CS_OOB2.upk', 'surroundings', true, false],
+      ['cs_p.upk', 'cs_p.upk', 'surroundings', false, true]]);
+    assert.deepStrictEqual(renamed(p), ['CS_Field', 'CS_OOB', 'CS_OOB2']);
+    assert.strictEqual(arenas.mergePlan(mann, arena('eurostadium_dusk_p', 'Mannfield (Dusk)', []), all).how, 'none');
     // every file of one merge shares a group, so it is undone as one
     assert.ok(arenas.mergePlan(dusk, beach, all).ops.every((o) => o.group === 'merge:ff_dusk_p:beach_p' && o.label === 'Estadio Vida stadium in Salty Shores'));
     // a different pitch cannot be swapped whole
@@ -247,8 +258,9 @@ function makeEngine(cooked, running = { value: false }) {
     assert.strictEqual(arenas.snowPlan(park, list).how, 'version');
     // scanned without the game's text, so "standard" is not known here
     const plan = arenas.mergePlan({ ...beach, standard: true }, { ...cs, standard: true }, list);
-    assert.strictEqual(plan.how, 'stadium');
-    assert.deepStrictEqual(plan.ops.map((o) => [o.gameFile, o.sourceGameFile]), [[cs.field, beach.field]]);
+    assert.strictEqual(plan.how, 'build');
+    const main = plan.ops[plan.ops.length - 1];
+    assert.deepStrictEqual([main.gameFile, main.from, main.side, main.gameplay], [cs.file, beach.file, 'stadium', true]);
     const again = arenas.scanArenas(real, cache); // second pass comes from the cache
     assert.strictEqual(again.length, list.length);
     console.log(`        ${list.length} arenas, ${list.filter((a) => a.field).length} with a stadium part, ${list.filter((a) => arenas.snowPlan(a, list)).length} with a snow option`);
@@ -306,8 +318,6 @@ function makeEngine(cooked, running = { value: false }) {
     const fni = { ...arena('fni_stadium_p', 'Forbidden Temple (Fire & Ice)', ['FNI_Stadium_VFX.upk']), file: 'FNI_Stadium_P.upk' };
     const all = [aqua, neon, mann, dfh, winter, fni];
     const changes = new Map();
-    // Mannfield has no part files, so as the stadium arena it can only be played whole
-    assert.strictEqual(arenas.mergePlan(mann, dfh, all).how, 'whole');
     for (const op of [...arenas.mergePlan(neon, aqua, all).ops, ...arenas.mergePlan(mann, dfh, all).ops, ...arenas.mergePlan(dfh, winter, all).ops]) changes.set(op.gameFile.toLowerCase(), op);
     // the merged arenas are listed under their merge (the added files are not arenas)
     assert.deepStrictEqual(arenas.mergedArenas(all, changes).map((m) => [m.arena.id, m.label]).sort(),
@@ -315,23 +325,16 @@ function makeEngine(cooked, running = { value: false }) {
     // every match with a built merge builds it again in every arena's place, with the same added files
     const b = changes.get('stadium_winter_p.upk');
     let ops = arenas.everyMatchOps(winter, all, changes, 'x');
-    assert.ok(ops.length && ops.every((o) => o.kind === 'build' && o.from === 'stadium_p.upk' && o.renames === b.renames && o.side === 'stadium'));
-    // every match with the stadium merge: AquaDome's main file loads the merged stadium; the merged-over Mannfield is left alone
-    // every match with the stadium merge: AquaDome's main file loads the merged stadium; arenas merged over are left alone
+    assert.ok(ops.length && ops.every((o) => o.kind === 'build' && o.from === 'stadium_p.upk' && o.renames === b.renames && o.side === 'stadium' && o.gameplay === true));
     ops = arenas.everyMatchOps(aqua, all, changes, 'Neon Fields stadium in AquaDome');
-    assert.deepStrictEqual(ops.map((o) => `${o.gameFile}<-${o.sourceGameFile}`), ['music_p.upk<-underwater_p.upk', 'eurostadium_p.upk<-underwater_p.upk', 'FNI_Stadium_P.upk<-underwater_p.upk']);
+    assert.deepStrictEqual(ops.map((o) => `${o.gameFile}<-${o.from}`), ['music_p.upk<-music_p.upk', 'eurostadium_p.upk<-music_p.upk', 'FNI_Stadium_P.upk<-music_p.upk']);
     assert.ok(ops.every((o) => o.chosen === 'underwater_p' && o.label.startsWith('Neon Fields stadium in AquaDome in place of')));
-    // every match with the whole-arena merge copies what DFH Stadium really loads now: Mannfield
+    // a place-based merge (the stadium arena had no parts) is built again the same way: DFH Stadium's outside with its gameplay
     ops = arenas.everyMatchOps(dfh, all, changes);
-    assert.ok(ops.every((o) => o.sourceGameFile === 'eurostadium_p.upk') && !ops.some((o) => o.gameFile === 'eurostadium_p.upk'));
-    // stadium and built merges get no snow: the snowy version would replace what makes the merge
-    assert.strictEqual(arenas.snowPlan(aqua, all, changes), null);
-    assert.strictEqual(arenas.snowPlan(winter, all, changes), null);
+    assert.ok(ops.length && ops.every((o) => o.from === 'stadium_p.upk' && o.side === 'surroundings' && o.gameplay === true));
+    // merged arenas get no snow: the snowy version would replace what makes the merge
+    for (const a of [aqua, winter, dfh]) assert.strictEqual(arenas.snowPlan(a, all, changes), null);
     assert.strictEqual(arenas.snowPlan(dfh, all).op.sourceGameFile, 'stadium_winter_p.upk');
-    // snow on a whole merge: DFH Stadium (now Mannfield) becomes the snowy Mannfield, still as part of that merge
-    const snowyMann = arena('eurostadium_snownight_p', 'Mannfield (Snowy)', []);
-    const s = arenas.snowPlan(dfh, [...all, { ...snowyMann, file: 'EuroStadium_SnowNight_P.upk' }], changes);
-    assert.deepStrictEqual([s.how, s.op.gameFile, s.op.sourceGameFile, s.op.group, s.op.label], ['version', 'stadium_p.upk', 'EuroStadium_SnowNight_P.upk', 'merge:eurostadium_p:stadium_p', 'Mannfield stadium in DFH Stadium, snowy']);
   });
 
   test('Steam shortcut file: read and written back exactly, our entry added and removed cleanly', () => {
@@ -386,8 +389,14 @@ function makeEngine(cooked, running = { value: false }) {
     assert.ok(t.exports.every((e, i) => upk.readObject(again, t, e).equals(P.obj(P.t.exports[i]))));
     // one side kept: some meshes hidden, gameplay gone from the surroundings, a part renamed, still readable
     const S = mapbuild.open(buf, keys);
-    const stats = mapbuild.keepSide(S, 'surroundings');
-    assert.ok(stats.hidden > 20 && stats.kept > 20 && stats.actorsRemoved > 50, JSON.stringify(stats));
+    const log = [];
+    const stats = mapbuild.keepSide(S, 'surroundings', { region: mapbuild.arenaRegion([mapbuild.open(buf, keys)]) }, log);
+    assert.ok(stats.hidden > 20 && stats.kept > 20, JSON.stringify(stats));
+    // no gameplay and no lights come along with the outside; sky and fog do
+    assert.ok(log.filter((l) => /^(VehiclePickup|Goal|PlayerStart|StaticLightCollectionActor)/.test(l.what)).every((l) => !l.kept));
+    assert.ok(log.some((l) => /SkySphere/.test(l.name) && l.kept));
+    // and its stadium is gone: nothing kept sits on the pitch
+    assert.ok(log.filter((l) => l.kept && l.what === 'mesh' && l.x !== null && !/sky|fog|sun/i.test(l.name)).every((l) => Math.abs(l.x) > 4096 || Math.abs(l.y) > 5120));
     const built = mapbuild.repack(S, Buffer.from(upk.DEFAULT_KEYS[0], 'hex'), { Farm_SFX: 'BPabcd12' });
     const t2 = upk.readTables(built, keys);
     assert.ok(t2.names.includes('BPabcd12') && !t2.names.some((n) => /^farm_sfx$/i.test(n)));

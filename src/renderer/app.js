@@ -528,7 +528,7 @@ const shownIn = (gameFile) => arenas.filter((a) => a.file.toLowerCase() === game
 const playHint = (list) => (list.length ? `Play ${list.map((a) => a.name).join(' or ')} to see it.` : '');
 
 views.lab = () => {
-  const root = bento(noteTile('warn', 's12', 'Experimental. Each kind of merge has been tried in game on a few arenas, not on every pair. Only you see the result, and every change can be reverted below. To pick an arena yourself, use Free Play, Exhibition or a Private Match.'));
+  const root = bento(noteTile('warn', 's12', 'Experimental. Merges sort every piece of both arenas into stadium or outside by name and position, so an odd piece can land on the wrong side; tell us which. Only you see the result, and every change can be reverted below. To pick an arena yourself, use Free Play, Exhibition or a Private Match.'));
   if (!arenas) {
     api('arenas').then((list) => { arenas = list; if (ui.tab === 'lab') render(true); });
     root.append(tile('s12', empty('maps', 'Reading the arenas', 'Finding the parts each arena is built from.')));
@@ -594,7 +594,7 @@ views.lab = () => {
         onclick: () => run(() => api('mergeArenas', lab.donor, lab.base), (r) => `${r.queued ? 'Queued.' : 'Merged.'} ${playHint(r.play.map((name) => ({ name })))}`) },
       S.running ? 'Queue merge' : 'Merge')),
     tile('s5', head('Add snow', h('span', { class: 'tag' }, `${choices.snow.length} arenas`)),
-      h('p', { class: 'muted' }, 'Falling snow is only in the game’s four snowy arenas, so an arena built on DFH Stadium, Mannfield, Beckwith Park or Utopia Coliseum can become its snowy version. That includes your whole-arena merges built on them.'),
+      h('p', { class: 'muted' }, 'Falling snow is only in the game’s four snowy arenas, so an arena built on DFH Stadium, Mannfield, Beckwith Park or Utopia Coliseum can become its snowy version. Merged arenas cannot: the snowy version would replace the merge.'),
       select(choices.snow.map((c) => [c.id, mergedTag(c)]), lab.snow, choose('snow')),
       snow && h('p', { class: 'muted small' }, `Plays ${snow.snowy} in its place${snow.merged ? ', and keeps your merge' : ''}.`),
       snow && h('p', { class: 'small' }, h('b', {}, playHint(snow.play.map((name) => ({ name }))))),
@@ -633,7 +633,7 @@ function mergeHow(plan, donor, base) {
   const how = {
     stadium: `Both arenas keep their stadium in a separate file, so ${donor.name}’s stadium is put straight into ${base.name}.`,
     surroundings: `${donor.name} keeps its stadium and gets ${base.name}’s surroundings around it${files}. Anything built into ${donor.name}’s own file, like a skyline, stays as well.`,
-    build: `These arenas keep stadium and surroundings in one file, so Boostpad takes both apart piece by piece: ${donor.name}’s pitch, stands and gameplay with ${base.name}’s surroundings around them${files}. Pieces are sorted by name and position, so an odd one can end up on the wrong side.`,
+    build: `Boostpad takes both maps apart piece by piece: only ${donor.name}’s stadium (pitch, walls, stands, crowd) is kept, and only ${base.name}’s outside, sky and fog around it${files}. Each arena’s stadium is measured from where its stands are.`,
     whole: `${[donor, base].find((a) => !a.field) === donor ? donor.name : base.name} has its stadium built into its main file, so these two cannot be taken apart and put back together. Instead, all of ${donor.name} is played whenever you pick ${base.name}.`,
   }[plan.how];
   return h('div', {},

@@ -77,7 +77,7 @@ function tagged(P, data) {
   const { names } = P;
   if (data.length >= 12 && names[data.readInt32LE(4)] === 'None') return { props: [], end: 12 };
   let start = -1;
-  for (const s of [0, 4, 8, 12, 16, 20, 24, 28]) {
+  for (let s = 0; s <= 60; s += 4) { // some actors start with a few values before their properties
     if (s + 12 > data.length) break;
     const ty = names[data.readInt32LE(s + 8)];
     if (names[data.readInt32LE(s)] !== undefined && ty && /Property$/.test(ty)) { start = s; break; }
@@ -120,26 +120,6 @@ function meshBounds(P, index, cache) {
   return b;
 }
 
-/* ---------- what is stadium and what is surroundings ---------- */
-
-// Names that say it outright; otherwise the position decides. A standard pitch is
-// 8192 x 10240 units around the origin; stands reach a few thousand units further.
-const OUTSIDE_NAME = /OOB|sky|cloud|sunplane|moon|horizon|mountain|terrain|backdrop|skyline|ocean/i;
-const STADIUM_NAME = /stadium|stand|field|goal|crowd|bleach|arena|pitch|seat|boost|collision|ramp|cage|dome|net(post)?s?_|wall|floor|trim|glass/i;
-function isStadium(name, pos, ext) {
-  if (/OOB/i.test(name)) return false;
-  if (STADIUM_NAME.test(name)) return true;
-  if (OUTSIDE_NAME.test(name)) return false;
-  if (!pos) return true;
-  const size = ext ? Math.max(ext.x, ext.y) : 0;
-  return Math.abs(pos.x) <= 8000 && Math.abs(pos.y) <= 9600 && size < 15000;
-}
-
-// Actor classes that are gameplay, lighting or atmosphere: they stay with the stadium
-// and never come along with the surroundings.
-const GAME_ONLY = /^(WorldInfo|VehiclePickup|Goal|PlayerStart|Pylon|PointInSpace|CameraActor|SpectatorVolume|TriggerVolume|DecalBlockingActor|GroundStaticMeshActor|FXActor|LightmassImportanceVolume|PrefabInstance|ExponentialHeightFog|HeightFog|WindDirectionalSource|SceneCapture|StaticLightCollectionActor|.*Light$|.*Volume|MapInfo|ArenaSoundSettings|CrowdSounds|StatEvent|Note)/;
-const ART = /^(StaticMeshCollectionActor|StaticMeshActor|InstancedFoliageActor)$/;
-
 // The level object and its actor list: owner, count, references.
 function levelActors(P) {
   const level = P.t.exports.find((e) => e.cls === 'Level');
@@ -153,58 +133,183 @@ function levelActors(P) {
   return { d, at: at + 4, count };
 }
 
-/**
- * Keeps one side of a map package, in place: 'stadium' or 'surroundings'.
- * With 'surroundings', gameplay, lights and atmosphere actors are taken out of the level.
- * Returns counts of what is kept and hidden.
- */
-function keepSide(P, side) {
-  const keepStadium = side === 'stadium';
+/* ---------- where things are ---------- */
+
+// Placement of a component: Translation, Rotation (yaw is what matters for a stadium) and scale.
+function placement(d, r) {
+  const t = vec(d, prop(r, 'Translation')) || { x: 0, y: 0, z: 0 };
+  const rot = prop(r, 'Rotation');
+  const yaw = rot && rot.size === 12 ? (d.readInt32LE(rot.at + 4) / 65536) * 2 * Math.PI : 0;
+  const s3 = vec(d, prop(r, 'Scale3D')) || { x: 1, y: 1, z: 1 };
+  const sp = prop(r, 'Scale');
+  const s = sp && sp.type === 'FloatProperty' ? d.readFloatLE(sp.at) : 1;
+  return { t, yaw, s: { x: s3.x * s, y: s3.y * s, z: s3.z * s } };
+}
+// World box of local bounds under a placement.
+function worldBox(b, pl) {
+  const cx = b.c.x * pl.s.x, cy = b.c.y * pl.s.y;
+  const cos = Math.cos(pl.yaw), sin = Math.sin(pl.yaw);
+  const ex = Math.abs(b.e.x * pl.s.x), ey = Math.abs(b.e.y * pl.s.y);
+  return {
+    c: { x: pl.t.x + cx * cos - cy * sin, y: pl.t.y + cx * sin + cy * cos, z: pl.t.z + b.c.z * pl.s.z },
+    e: { x: Math.abs(cos) * ex + Math.abs(sin) * ey, y: Math.abs(sin) * ex + Math.abs(cos) * ey, z: Math.abs(b.e.z * pl.s.z) },
+  };
+}
+
+// Every placed thing in a level: meshes and particle systems of the collection actors (each
+// hideable on its own), and the other actors (removable from the level).
+function inventory(P) {
   const cache = new Map();
-  const stats = { kept: 0, hidden: 0, actorsRemoved: 0 };
   const { d: lv, at, count } = levelActors(P);
-  for (let i = 0; i < count; i++) {
+  const items = [];
+  for (let i = 1; i < count; i++) { // 0 is WorldInfo: every level has one
     const ref = lv.readInt32LE(at + i * 4);
     if (ref <= 0) continue;
     const actor = P.t.exports[ref - 1];
-    const remove = () => { lv.writeInt32LE(0, at + i * 4); stats.actorsRemoved++; };
-    if (i === 0) continue; // WorldInfo: every level has one
-    if (actor.cls === 'StaticMeshCollectionActor') {
-      const d = P.obj(actor);
-      const list = prop(tagged(P, d), 'StaticMeshComponents');
-      if (!list) continue;
+    const remove = () => lv.writeInt32LE(0, at + i * 4);
+    const d = P.obj(actor);
+    const r = tagged(P, d);
+    const list = prop(r, 'StaticMeshComponents') || prop(r, 'ParticleSystemComponents');
+    if (list && /CollectionActor$/.test(actor.cls)) {
       const n = d.readInt32LE(list.at);
       for (let k = 0; k < n; k++) {
         const ci = d.readInt32LE(list.at + 4 + k * 4);
         if (ci <= 0) continue;
-        const comp = P.t.exports[ci - 1];
-        const cd = P.obj(comp);
+        const cd = P.obj(P.t.exports[ci - 1]);
         const cr = tagged(P, cd);
-        const sm = prop(cr, 'StaticMesh');
-        if (!sm || sm.type !== 'ObjectProperty') continue;
-        const mesh = cd.readInt32LE(sm.at);
-        if (mesh === 0) continue;
-        const b = meshBounds(P, mesh, cache);
-        const tr = vec(cd, prop(cr, 'Translation')) || { x: 0, y: 0, z: 0 };
-        const pos = b ? { x: tr.x + b.c.x, y: tr.y + b.c.y } : tr;
-        const name = mesh > 0 ? P.t.exports[mesh - 1].name : '';
-        if (isStadium(name, pos, b && b.e) === keepStadium) stats.kept++;
-        else { cd.writeInt32LE(0, sm.at); stats.hidden++; }
+        const pl = placement(cd, cr);
+        const sm = prop(cr, 'StaticMesh'), tpl = prop(cr, 'Template');
+        const slot = sm || tpl;
+        if (!slot || slot.type !== 'ObjectProperty') continue;
+        const obj = cd.readInt32LE(slot.at);
+        if (obj === 0) continue;
+        const name = obj > 0 ? P.t.exports[obj - 1].name : '';
+        const local = sm ? meshBounds(P, obj, cache) : null;
+        items.push({
+          kind: sm ? 'mesh' : 'particles', name, box: local ? worldBox(local, pl) : { c: pl.t, e: { x: 0, y: 0, z: 0 } }, known: !!local || !!prop(cr, 'Translation'),
+          hide: () => cd.writeInt32LE(0, slot.at),
+        });
       }
-    } else if (actor.cls === 'InstancedFoliageActor') {
-      if (keepStadium) remove(); // foliage is scenery
-    } else if (GAME_ONLY.test(actor.cls)) {
-      if (!keepStadium) remove();
-    } else {
-      // anything else that is placed somewhere (animated props, emitters, decals): by position
-      const d = P.obj(actor);
-      const loc = vec(d, prop(tagged(P, d), 'Location'));
-      const stadium = isStadium(actor.name, loc, null);
-      if (stadium !== keepStadium) remove();
+      continue;
     }
+    const loc = vec(d, prop(r, 'Location'));
+    items.push({ kind: 'actor', cls: actor.cls, name: actor.name, box: loc ? { c: loc, e: { x: 0, y: 0, z: 0 } } : null, known: !!loc, hide: remove });
+  }
+  return items;
+}
+
+/* ---------- what is stadium and what is outside ---------- */
+
+// The stadium of an arena is a region: the pitch with its walls and goals, plus the footprint
+// of each of its stands (measured from the map). Arenas differ a lot: Parc de Paris has stands
+// only behind the goals and open park along the sides, so one box around everything would
+// count the park as stadium.
+const STANDS = /stand|bleach|seat|tribune|grandstand|crowd|people|audience|spectator|_roof|backwall/i;
+const SKY = /sky|cloud|sunplane|sun_?disc|moon|horizon|fog|backdrop|skyline|stars?_/i;
+const NEVER_STADIUM = /OOB/i;
+const STADIUM_PART = /stadium|arena|coliseum/i;
+const PITCH = { x: 4700, y: 6400 }; // half sizes: walls at 4096 x 5120, goals 880 deep, a little room
+const STAND_ROOM = 400;
+
+// One box per stands piece, mirrored both ways (arenas are symmetric).
+function standBoxes(P) {
+  const out = [];
+  for (const it of inventory(P)) {
+    if (it.kind !== 'mesh' || !it.known || !STANDS.test(it.name) || SKY.test(it.name) || NEVER_STADIUM.test(it.name)) continue;
+    if (flat(it.box)) continue; // a path or floor named after the stands is not a stand
+    const { c, e } = it.box;
+    if (Math.abs(c.x) + e.x > 60000 || Math.abs(c.y) + e.y > 60000) continue; // a mistaken giant: not a stand
+    for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+      out.push({ x0: sx * c.x - e.x - STAND_ROOM, x1: sx * c.x + e.x + STAND_ROOM, y0: sy * c.y - e.y - STAND_ROOM, y1: sy * c.y + e.y + STAND_ROOM });
+    }
+  }
+  return out;
+}
+// The stadium region of an arena from all its packages that hold stands (main file, stadium
+// file, outside parts): [pitch box, ...stand boxes], rounded and without duplicates.
+function arenaRegion(packages) {
+  const boxes = [{ x0: -PITCH.x, x1: PITCH.x, y0: -PITCH.y, y1: PITCH.y }];
+  const seen = new Set();
+  for (const P of packages) {
+    for (const b of standBoxes(P)) {
+      const r = { x0: Math.round(b.x0), x1: Math.round(b.x1), y0: Math.round(b.y0), y1: Math.round(b.y1) };
+      const k = `${r.x0},${r.x1},${r.y0},${r.y1}`;
+      if (!seen.has(k)) { seen.add(k); boxes.push(r); }
+    }
+  }
+  return boxes;
+}
+const inRegion = (pt, region) => region.some((b) => pt.x >= b.x0 && pt.x <= b.x1 && pt.y >= b.y0 && pt.y <= b.y1);
+const regionBounds = (region) => region.reduce((a, b) => ({ x: Math.max(a.x, Math.abs(b.x0), Math.abs(b.x1)), y: Math.max(a.y, Math.abs(b.y0), Math.abs(b.y1)) }), { x: 0, y: 0 });
+// mostly inside: its centre, and the middle of each side, are in the region
+const mostlyIn = (box, region) => inRegion(box.c, region)
+  && [[1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dy]) => inRegion({ x: box.c.x + dx * box.e.x * 0.5, y: box.c.y + dy * box.e.y * 0.5 }, region));
+const flat = (box) => box.e.z < 150 && (box.e.x > 2000 || box.e.y > 2000);
+const DEFAULT_REGION = [{ x0: -6500, x1: 6500, y0: -8000, y1: 8000 }];
+
+// Gameplay pieces: they come from one map only (the base), never from both.
+const GAMEPLAY = /^(VehiclePickup|Goal|PlayerStart|Pylon|PointInSpace|CameraActor|SpectatorVolume|TriggerVolume|DecalBlockingActor|GroundStaticMeshActor|FXActor|LightmassImportanceVolume|PrefabInstance|MapInfo|ArenaSoundSettings|CrowdSounds|StatEvent|SceneCapture|Note|.*Volume(_TA)?$|.*Manager_TA$)/;
+// Sky light and fog: they colour everything around, so they come with the outside.
+const ATMOSPHERE = /^(ExponentialHeightFog|HeightFog|WindDirectionalSource|SkyLight)/;
+const LIGHTS = /^(StaticLightCollectionActor|.*Light)$/;
+
+/**
+ * Keeps one side of a map package, in place.
+ *   'stadium'       only this arena's stadium (`region`): pieces mostly inside it. The sky,
+ *                   fog, anything named OOB and everything further out is hidden. Lights stay
+ *                   (they light the stadium).
+ *   'surroundings'  only what lies outside both stadiums (`region`, this arena's own, and
+ *                   `clear`, the other arena's), plus sky and fog. Lights are taken out.
+ * gameplay: keep the gameplay actors (boost pads, goals, spawns, collision). Exactly one
+ * package of a merge has them.
+ * Returns counts; `log` (an array) gets one line per thing.
+ */
+function keepSide(P, side, { region = DEFAULT_REGION, clear = [], gameplay = side === 'stadium', part = false } = {}, log = null) {
+  const stats = { kept: 0, hidden: 0 };
+  const both = [...region, ...clear];
+  const reach = regionBounds(both), own = regionBounds(region);
+  for (const it of inventory(P)) {
+    let keep;
+    if (side === 'empty') {
+      keep = false; // a part that must load nothing
+    } else if (it.kind === 'actor') {
+      if (it.cls === 'InstancedFoliageActor') keep = side === 'surroundings';
+      else if (GAMEPLAY.test(it.cls)) keep = gameplay;
+      else if (ATMOSPHERE.test(it.cls)) keep = side === 'surroundings';
+      else if (LIGHTS.test(it.cls)) keep = side === 'stadium' || gameplay;
+      else if (side === 'stadium') keep = !it.box || inRegion(it.box.c, region); // no position: an arena piece
+      else keep = !!it.box && !inRegion(it.box.c, both);
+    } else if (SKY.test(it.name)) {
+      keep = side === 'surroundings';
+    } else if (/collision/i.test(it.name)) {
+      keep = gameplay; // collision comes with the gameplay, from one map only
+    } else if (!it.known) {
+      // a piece with no position: in the arena's main map it belongs to the stadium; in an outside part
+      // file (fish, birds, weather) it is outside
+      keep = side === 'stadium' ? !part : part;
+    } else if (side === 'stadium') {
+      // flat ground centred in the stadium stays too, so the stands do not stand over a hole;
+      // a piece named after the stadium that sticks out past the stands (outer arches) stays too
+      const named = STADIUM_PART.test(it.name) && !flat(it.box) && Math.abs(it.box.c.x) <= own.x && Math.abs(it.box.c.y) <= own.y;
+      keep = !NEVER_STADIUM.test(it.name) && (mostlyIn(it.box, region) || (flat(it.box) && inRegion(it.box.c, region)) || named);
+    } else {
+      // big flat ground that runs under the other stadium stays when it lies below the pitch
+      const ground = flat(it.box) && it.box.c.z + it.box.e.z <= 0 && (it.box.e.x > reach.x || it.box.e.y > reach.y);
+      // this arena's own outer stadium pieces (named after it, within its reach) are stadium, not outside
+      const ownStadium = STADIUM_PART.test(it.name) && !flat(it.box) && Math.abs(it.box.c.x) <= own.x && Math.abs(it.box.c.y) <= own.y;
+      keep = ground || (!ownStadium && !inRegion(it.box.c, both) && !mostlyIn(it.box, both));
+    }
+    if (!keep) it.hide();
+    stats[keep ? 'kept' : 'hidden']++;
+    if (log) log.push({ what: it.kind === 'actor' ? it.cls : it.kind, name: it.name, x: it.box ? Math.round(it.box.c.x) : null, y: it.box ? Math.round(it.box.c.y) : null, kept: keep });
   }
   return stats;
 }
+// How many stadium pieces a package has (a part with none is free to reuse).
+function stadiumPieces(P, region) {
+  return inventory(P).filter((it) => it.kind === 'mesh' && it.known && !SKY.test(it.name) && !NEVER_STADIUM.test(it.name) && mostlyIn(it.box, region)).length;
+}
+
 
 // Streaming level names a map loads (its part packages), as written in its name table.
 function partNames(P, partFiles) {
@@ -218,4 +323,4 @@ function newFileName(seed, maxLen) {
   return `BP${hex.slice(0, Math.max(4, Math.min(8, maxLen - 2)))}`;
 }
 
-module.exports = { open, repack, keepSide, levelActors, partNames, newFileName, isStadium, deflateChunk, tagged };
+module.exports = { open, repack, keepSide, levelActors, partNames, newFileName, deflateChunk, tagged, inventory, arenaRegion, standBoxes, stadiumPieces, DEFAULT_REGION };

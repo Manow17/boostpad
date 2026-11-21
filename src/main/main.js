@@ -12,6 +12,7 @@ const { Maps, MAP_SLOT } = require('./core/library');
 const arenas = require('./core/arenas');
 const bakkes = require('./core/bakkes');
 const steam = require('./core/steam');
+const mapbuild = require('./core/mapbuild');
 const { readLabels, readTexts, applyLabels } = require('./core/labels');
 
 const DEFAULTS = {
@@ -339,8 +340,25 @@ const api = {
   },
   async mergeArenas(stadiumId, placeId) {
     const list = api.arenas(), find = (id) => list.find((a) => a.id === id);
-    const plan = arenas.mergePlan(find(stadiumId), find(placeId), list);
+    const stadium = find(stadiumId), place = find(placeId);
+    if (!stadium || !place) throw new Error('Arena not found');
+    // read both maps: where each stadium is, and which of the stadium arena's parts hold none of it
+    const opened = new Map();
+    const open = (file) => {
+      const key = file.toLowerCase();
+      if (!opened.has(key)) {
+        let pkg = null;
+        try { pkg = mapbuild.open(fs.readFileSync(engine.pristine(file)), extraKeys); } catch { /* unreadable: left out */ }
+        opened.set(key, pkg);
+      }
+      return opened.get(key);
+    };
+    const info = arenas.mergeInfo(stadium, place, open, mapbuild);
+    opened.clear();
+    const plan = arenas.mergePlan(stadium, place, list, info);
     if (plan.how === 'none') throw new Error(plan.reason);
+    // a merge made before for this pair goes first, so no file of the old one stays
+    for (const rec of engine.list().active) if (rec.op.group === plan.ops[0].group && !plan.ops.some((o) => o.gameFile.toLowerCase() === rec.key)) await engine.revert(rec.key);
     let queued = false;
     for (const op of plan.ops) queued = (await engine.apply(op)).queued || queued;
     return { queued, play: plan.play.map((a) => a.name), state: snapshot() };
