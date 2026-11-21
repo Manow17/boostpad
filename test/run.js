@@ -360,27 +360,6 @@ function makeEngine(cooked, running = { value: false }) {
     assert.ok(steam.withoutShortcut(twice).equals(file));
   });
 
-  test('training buttons and settings are written into BakkesMod\'s files', () => {
-    const bakkes = require('../src/main/core/bakkes');
-    const cfg = 'rcon_port "9002" //\r\nbp_history "30" //Seconds of Free Play';
-    const out = bakkes.writeCvars(cfg, { bp_history: '45', bp_variance: '20' });
-    assert.deepStrictEqual(bakkes.readCvars(out), { rcon_port: '9002', bp_history: '45', bp_variance: '20' });
-    assert.match(out, /bp_history "45" \/\/Seconds of Free Play/); // descriptions stay
-    const binds = '//Warning: rewritten\nbind F2 "togglemenu settings"\nbind XboxTypeS_DPad_Up "default_up;cpt_freeze_ball"\nbind XboxTypeS_RightThumbStick "cpt_freeze"\nbind One "bp_rewind"\n';
-    // Boostpad's rewind moves to R3: NitrOP's command leaves that button, Boostpad's old one leaves One,
-    // BakkesMod's own commands stay; a setup's button sets the setup and launches
-    const setup = bakkes.DEFAULT_SETUPS[1];
-    const b = bakkes.readBinds(bakkes.writeBinds(binds, { XboxTypeS_RightThumbStick: ['bp_rewind'], T: bakkes.setupCommands(setup) }));
-    assert.deepStrictEqual(b.XboxTypeS_RightThumbStick, ['bp_rewind']);
-    assert.deepStrictEqual(b.XboxTypeS_DPad_Up, ['default_up', 'cpt_freeze_ball']);
-    assert.ok(!b.One && b.F2);
-    assert.strictEqual(b.T[0], 'bp_impulse_kind lob');
-    assert.strictEqual(b.T[b.T.length - 1], 'bp_impulse');
-    // writing again gives the same file (old setup commands are taken off first)
-    const once = bakkes.writeBinds(binds, { T: bakkes.setupCommands(setup) });
-    assert.strictEqual(bakkes.writeBinds(once, { T: bakkes.setupCommands(setup) }), once);
-  });
-
   test('ground under the new pitch is lowered, even when it has no position of its own', () => {
     const keysFile = path.join(process.env.APPDATA || '', 'boostpad', 'keys.txt');
     const file = path.join(real || '', 'Outlaw_Oasis_OOB.upk');

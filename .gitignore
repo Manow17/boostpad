@@ -4,5 +4,3 @@ videos/
 *.log
 .claude/
 server/data.json
-
-bakkesmod-plugin/build/

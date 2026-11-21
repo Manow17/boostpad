@@ -10,7 +10,6 @@ const PAGES = {
   garage: ['Garage', 'Give an item you own the look of another. Only you see it.'],
   maps: ['Workshop Maps', 'Training and challenge maps, on Steam or Epic.'],
   lab: ['Map Merge', 'Mix the game’s own arenas, and add snow.'],
-  training: ['Training', 'Freeplay checkpoints: rewind, save a moment, try it again.'],
   controller: ['Controller', 'Steam Input for the Epic version: square dead zone and Steam’s stick settings.'],
   presets: ['Presets', 'Save your whole setup and switch in one click.'],
   overlay: ['Overlay', 'Your music and your controller, over the game.'],
@@ -18,7 +17,7 @@ const PAGES = {
   settings: ['Settings', ''],
 };
 const NAV = [
-  [['garage', 'cars'], ['maps', 'maps'], ['lab', 'merge'], ['training', 'rewind'], ['presets', 'presets']],
+  [['garage', 'cars'], ['maps', 'maps'], ['lab', 'merge'], ['presets', 'presets']],
   [['controller', 'stick'], ['overlay', 'overlay']],
   [['profile', 'profile'], ['settings', 'settings']],
 ];
@@ -63,7 +62,6 @@ const IC = {
   play: 'M8 5l11 7l-11 7z',
   lock: 'M7 11V8a5 5 0 0 1 10 0v3 M5 11h14v9H5z M12 15v2',
   merge: 'M6 4v5a7 7 0 0 0 7 7h5 M6 20v-9 M15 12l4 4l-4 4',
-  rewind: 'M4 12a8 8 0 1 0 2.3-5.6 M4 4v5h5 M12 8v4l3 2',
   stick: 'M12 3a3.5 3.5 0 1 0 0 7a3.5 3.5 0 0 0 0-7z M12 10v5 M5 15h14l-1.5 6h-11z',
 };
 const FILLED = new Set(['play']);
@@ -651,110 +649,6 @@ function mergeHow(plan, donor, base) {
     h('p', { class: 'small' }, h('b', {}, playHint(plan.play.map((name) => ({ name }))))),
     plan.note && h('p', { class: 'muted small' }, plan.note));
 }
-
-/* ---------- training ---------- */
-
-// Boostpad Training, Boostpad's own BakkesMod plugin: freeplay checkpoints and impulse setups.
-let training = null;
-const tr = { draft: null, open: null };
-const trainingDraft = (t) => JSON.parse(JSON.stringify({ buttons: t.buttons, options: t.options, setups: t.setups, current: t.current }));
-
-views.training = () => {
-  const root = bento();
-  if (!training) {
-    api('training').then((t) => { training = t; tr.draft = t.installed ? trainingDraft(t) : null; if (ui.tab === 'training') render(true); });
-    root.append(tile('s12', empty('rewind', 'Looking for BakkesMod', 'Boostpad’s training tools run inside BakkesMod.')));
-    return root;
-  }
-  const t = training;
-  if (!t.installed) {
-    root.append(noteTile('info', 's12', h('b', {}, 'BakkesMod is not installed'),
-      h('p', {}, 'Rewinding Free Play and launching the ball need something inside the game. Boostpad does not reach into Rocket League itself (anti-cheat would see that); it brings its own plugin for BakkesMod, the mod tool Psyonix tolerates. Install BakkesMod from bakkesmod.com, then open this page again.')));
-    return root;
-  }
-  const d = tr.draft;
-  const changed = JSON.stringify(d) !== JSON.stringify(trainingDraft(t));
-  const choices = [['', 'Not set'], ...t.choices];
-  const used = {};
-  const mark = (k) => { if (k) used[k] = (used[k] || 0) + 1; };
-  Object.values(d.buttons).forEach(mark); d.setups.forEach((s) => mark(s.key));
-  const twice = (k) => k && used[k] > 1 && h('div', { class: 'small', style: 'color:var(--warn, #f59e0b)' }, 'This button does two things now.');
-  const reload = (r) => { training = r.training; tr.draft = trainingDraft(r.training); };
-
-  // the plugin itself
-  const status = !t.plugin ? 'Not installed' : !t.upToDate ? 'Update ready' : t.loaded ? 'Installed' : 'Installed, not switched on';
-  root.append(tile('s12 ink', head('Boostpad Training', h('span', { class: `tag ${t.plugin && t.upToDate ? 'on' : ''}` }, status)),
-    h('p', { class: 'muted' }, 'Boostpad’s own Free Play tools. Rewind: freeze the game and scrub back through the last seconds with the stick, keep the moment as a checkpoint, and jump back to it to try the shot again. Impulse setups: one button puts the ball somewhere around your car and sends it at you: passes, lobs, high balls, wall feeds, bounces.'),
-    h('p', { class: 'muted small' }, 'They run inside BakkesMod as a small plugin that comes with Boostpad (its source is in the bakkesmod-plugin folder). Free Play and Custom Training only, never online.'),
-    h('div', { class: 'row' },
-      h('button', { class: 'btn primary', disabled: !t.bundled || (t.plugin && t.upToDate && t.loaded),
-        onclick: () => run(() => api('trainingInstall'), (r) => { reload(r); return r.via === 'rcon' ? 'Installed and running.' : 'Installed. It starts with BakkesMod next time.'; }) },
-      t.plugin ? (t.upToDate ? 'Switch on' : 'Update') : 'Install'),
-      h('span', { class: 'muted small grow' }, t.running ? 'BakkesMod is running with the game: changes apply straight away.' : 'BakkesMod is closed: changes apply when it starts with Rocket League.'))));
-
-  const setOpt = (k) => (v) => { d.options[k] = v; render(); };
-  const optRow = (k, label, hint) => h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, label), hint && h('div', { class: 'muted small' }, hint)), toggle(d.options[k], setOpt(k)));
-  const sliderRow = (obj, k, label, min, max, unit = '', step = 1) => h('div', { class: 'opt-row' }, h('div', { style: 'min-width:170px' }, h('b', {}, label)),
-    slider(min, max, obj[k], (v) => { obj[k] = v; render(); }, (v) => { obj[k] = v; const o = document.getElementById(`v-${label}`); if (o) o.textContent = `${step < 1 ? v.toFixed(1) : v}${unit}`; }, step),
-    h('span', { id: `v-${label}`, class: 'muted small', style: 'min-width:56px;text-align:right' }, `${step < 1 ? Number(obj[k]).toFixed(1) : obj[k]}${unit}`));
-
-  root.append(
-    tile('s7', head('Buttons'),
-      h('div', { class: 'list' }, t.actions.map((a) => h('div', { class: 'opt-row' },
-        h('div', { class: 'grow' }, h('b', {}, a.label), a.hint && h('div', { class: 'muted small' }, a.hint), twice(d.buttons[a.id])),
-        select(choices, d.buttons[a.id] || '', (v) => { d.buttons[a.id] = v; render(); }, 230))))),
-    tile('s5', head('Rewind and checkpoints'),
-      sliderRow(d.options, 'bp_history', 'Rewind history', 5, 120, ' s'),
-      optRow('bp_reset_on_goal', 'Back to the checkpoint after a goal'),
-      optRow('bp_mirror_random', 'Sometimes load it mirrored', 'Practise the same shot from the other side.'),
-      sliderRow(d.options, 'bp_variance', 'Variation', 0, 100, '%'),
-      optRow('bp_in_training', 'Also in Custom Training'),
-      optRow('bp_show_text', 'Show what happens on screen')));
-
-  // impulse setups
-  const setups = d.setups;
-  const cur = setups.find((s) => s.id === d.current) || setups[0];
-  const openSetup = setups.find((s) => s.id === tr.open);
-  root.append(tile('s12', head('Impulse setups', h('span', { class: 'tag' }, setups.length)),
-    h('p', { class: 'muted' }, 'The Impulse button launches the selected setup. A setup can also have a button of its own.'),
-    h('div', { class: 'list' }, setups.map((s) => h('div', { class: `item ${s.id === d.current ? 'sel' : ''}` },
-      art(s.name, 'ball'),
-      h('div', { class: 'grow' }, h('b', {}, s.name), h('div', { class: 'small muted' }, `${(t.kinds.find(([k]) => k === s.kind) || [, s.kind])[1]} · ${s.distance} away · ${s.speed} speed${s.key ? ` · ${(t.choices.find(([k]) => k === s.key) || [, s.key])[1]}` : ''}`), twice(s.key)),
-      s.id === d.current ? h('span', { class: 'tag on' }, 'Impulse button') : h('button', { class: 'btn sm', onclick: () => { d.current = s.id; render(); } }, 'Use'),
-      h('button', { class: 'btn sm', disabled: !t.running, title: t.running ? 'Launch it in the game now' : 'Start Rocket League with BakkesMod first',
-        onclick: () => run(() => api('trainingTry', s), 'Launched in the game.') }, 'Try'),
-      h('button', { class: 'btn sm', onclick: () => { tr.open = tr.open === s.id ? null : s.id; render(); } }, tr.open === s.id ? 'Close' : 'Edit')))),
-    openSetup && h('div', { class: 'stack', style: 'margin-top:12px' },
-      h('div', { class: 'row wrap' },
-        field({ value: openSetup.name, maxlength: 30, oninput: (e) => { openSetup.name = e.target.value; }, onchange: () => render() }),
-        select(t.kinds, openSetup.kind, (v) => { openSetup.kind = v; render(); }, 230),
-        select([['', 'No button of its own'], ...t.choices], openSetup.key || '', (v) => { openSetup.key = v; render(); }, 230),
-        h('button', { class: 'btn', disabled: setups.length < 2, onclick: () => { d.setups = setups.filter((s) => s !== openSetup); if (d.current === openSetup.id) d.current = d.setups[0].id; tr.open = null; render(); } }, 'Delete')),
-      h('div', { class: 'grid2' },
-        sliderRow(openSetup, 'distance', 'Distance', 300, 6000),
-        sliderRow(openSetup, 'side', 'Comes from', -180, 180, '°'),
-        sliderRow(openSetup, 'height', 'Starts at height', 93, 1900),
-        sliderRow(openSetup, 'speed', 'Speed', 200, 6000),
-        sliderRow(openSetup, 'targetHeight', 'Meets you at height', 93, 1800),
-        sliderRow(openSetup, 'lead', 'Leads your car by', 0, 3, ' s', 0.1),
-        sliderRow(openSetup, 'spin', 'Spin', 0, 6),
-        sliderRow(openSetup, 'random', 'Randomness', 0, 100, '%')),
-      h('p', { class: 'muted small' }, '“Comes from”: 0° straight ahead, 90° from the right, −90° from the left, 180° from behind. The ball flies a real arc under the game’s gravity to where your car will be.')),
-    h('div', { class: 'row', style: 'margin-top:10px' },
-      h('button', { class: 'btn', disabled: setups.length >= 24, onclick: () => {
-        const id = `s${Date.now().toString(36)}`;
-        d.setups.push({ ...(cur || {}), id, name: 'My setup', key: '' }); tr.open = id; render();
-      } }, 'New setup'))));
-
-  root.append(tile('s12', h('div', { class: 'row' },
-    h('p', { class: 'muted small grow' }, changed ? 'You have changes that are not saved yet.' : 'Everything is saved.'),
-    h('button', { class: 'btn', disabled: !changed, onclick: () => { tr.draft = trainingDraft(t); render(); } }, 'Undo changes'),
-    h('button', { class: 'btn primary', disabled: !changed, onclick: () => run(() => api('trainingSave', tr.draft), (r) => {
-      reload(r);
-      return r.via === 'rcon' ? 'Saved. BakkesMod has it now.' : 'Saved. BakkesMod picks it up next time it starts.';
-    }) }, 'Save'))));
-  return root;
-};
 
 /* ---------- controller ---------- */
 

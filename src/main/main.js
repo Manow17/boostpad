@@ -10,7 +10,6 @@ const mediaBridge = require('./media');
 const upk = require('./core/upk');
 const { Maps, MAP_SLOT } = require('./core/library');
 const arenas = require('./core/arenas');
-const bakkes = require('./core/bakkes');
 const steam = require('./core/steam');
 const mapbuild = require('./core/mapbuild');
 const { readLabels, readTexts, applyLabels } = require('./core/labels');
@@ -19,7 +18,6 @@ const DEFAULTS = {
   platform: null,
   installDir: null,
   steamInput: false, // Play starts Rocket League through Steam, for Steam Input
-  training: {}, // Training page: buttons, options and impulse setups of the Boostpad Training plugin
 
   theme: { mode: 'dark' },
   presets: [],
@@ -116,7 +114,6 @@ async function buildIndex() {
 }
 
 const rlExe = () => { const dir = settings.get('installDir'); return dir ? path.join(dir, 'Binaries', 'Win64', 'RocketLeague.exe') : null; };
-const bakkesLive = async () => (await game.isProcessRunning('BakkesMod.exe')) && (await game.isRunning());
 
 // Game files Boostpad has changed, or will change when the game closes: file (lower case) -> op.
 function arenaChanges() {
@@ -378,26 +375,6 @@ const api = {
     return api.apply(plan.op);
   },
 
-  // Training: Freeplay Checkpoint (a BakkesMod plugin) settings and buttons
-  // BakkesMod's part inside the game holds the settings while both run; otherwise its files do
-  async training() { return bakkes.state(await bakkesLive(), settings.get('training')); },
-  async trainingSave(changes) {
-    const clean = {
-      buttons: changes.buttons || {}, options: changes.options || {}, current: changes.current,
-      setups: (changes.setups || []).slice(0, 24).map((s) => ({ ...s, name: String(s.name || 'Setup').slice(0, 30) })),
-    };
-    const res = await bakkes.save(clean, await bakkesLive());
-    settings.set('training', clean);
-    return { ...res, training: await api.training() };
-  },
-  async trainingInstall() {
-    const res = await bakkes.install(await bakkesLive());
-    // the buttons and settings go in with it
-    const t = await api.training();
-    await bakkes.save({ buttons: t.buttons, options: t.options, setups: t.setups, current: t.current }, await bakkesLive());
-    return { ...res, training: await api.training() };
-  },
-  async trainingTry(setup) { await bakkes.tryNow(setup); return true; },
 
   presetSave(name) {
     const ops = engine.list().active.map((r) => r.op);
