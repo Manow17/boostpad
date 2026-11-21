@@ -1,4 +1,4 @@
-// The mod engine. Every change Boostpad makes to the game goes through here:
+// The mod engine. Every change OpenW makes to the game goes through here:
 // it replaces one existing file in CookedPCConsole, after saving the original,
 // and can always put the original back. While the game runs, changes are queued.
 //
@@ -13,7 +13,7 @@
 //   { kind: 'build', gameFile, from, side, renames, create } gameFile becomes a copy
 //       of the map `from` with only one side kept ('stadium' or 'surroundings'), and
 //       names renamed (see mapbuild.js). With `create`, gameFile is a new file that
-//       Boostpad adds to the folder and deletes again on revert.
+//       OpenW adds to the folder and deletes again on revert.
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -59,7 +59,7 @@ class Engine {
     catch (e) { return { ok: false, code: e.code || 'ERROR', message: e.message }; }
   }
 
-  // The unmodified version of a game file: the backup if Boostpad has changed it.
+  // The unmodified version of a game file: the backup if OpenW has changed it.
   pristine(fileName) {
     const key = fileName.toLowerCase();
     return this.store.get('active')[key] ? path.join(this.backupDir, key) : path.join(this.cooked(), fileName);
@@ -69,7 +69,7 @@ class Engine {
   destinationKey(fileName) {
     try { return upk.keyOfFile(this.pristine(fileName), this.getKeys()); }
     catch (e) {
-      if (e.code === 'NO_KEY') throw new EngineError('NO_KEY', `Boostpad cannot read ${fileName}, so it cannot write over it. Adding a key list in Settings may help.`);
+      if (e.code === 'NO_KEY') throw new EngineError('NO_KEY', `OpenW cannot read ${fileName}, so it cannot write over it. Adding a key list in Settings may help.`);
       return null; // not an encrypted package: written as it is
     }
   }
@@ -94,7 +94,7 @@ class Engine {
     if (op.kind === 'copy') {
       if (!op.sourceGameFile || path.basename(op.sourceGameFile) !== op.sourceGameFile) throw new EngineError('BAD_OP', 'Invalid source file name');
       if (op.sourceGameFile.toLowerCase() === op.gameFile.toLowerCase()) throw new EngineError('SAME_ITEM', 'Pick two different files');
-      // if Boostpad has changed the source itself, copy its original
+      // if OpenW has changed the source itself, copy its original
       const from = this.pristine(op.sourceGameFile);
       if (!fs.existsSync(from)) throw new EngineError('NO_SUCH_GAME_FILE', `${op.sourceGameFile} is not in the game folder`);
       const key = this.destinationKey(op.gameFile);
@@ -187,7 +187,7 @@ class Engine {
       if (!fs.existsSync(backup)) fs.copyFileSync(dest, backup); // first change: keep the original
     }
 
-    const tmp = `${dest}.boostpad-tmp`;
+    const tmp = `${dest}.openw-tmp`;
     fs.writeFileSync(tmp, content);
     fs.renameSync(tmp, dest);
     const st = fs.statSync(dest);
@@ -206,7 +206,7 @@ class Engine {
     const active = this.store.get('active');
     const rec = active[key];
     if (!rec) return;
-    if (rec.created) { // a file Boostpad added: take it away again
+    if (rec.created) { // a file OpenW added: take it away again
       fs.rmSync(path.join(this.cooked(), rec.file), { force: true });
       delete active[key];
       this.store.set('active', active);

@@ -7,10 +7,10 @@
 //
 // It takes over the PC while it runs (it presses keys and moves the mouse in the game window),
 // so start it when nobody is using the computer. Its merges are kept apart from your own
-// Boostpad changes (its own records and backups in %APPDATA%\boostpad\merge-test) and arenas
+// OpenW changes (its own records and backups in %APPDATA%\OpenW\merge-test) and arenas
 // you have changed yourself are left out. Everything it writes is reverted at the end, also
 // after an error; --keep leaves the last round in place.
-// Needs: Rocket League (Epic or Steam, as set in Boostpad), BakkesMod with its RCON plugin.
+// Needs: Rocket League (Epic or Steam, as set in OpenW), BakkesMod with its RCON plugin.
 const fs = require('fs');
 const path = require('path');
 const { spawn, execFile } = require('child_process');
@@ -28,14 +28,14 @@ const flag = (name) => process.argv.includes(`--${name}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
-const APPDATA = path.join(process.env.APPDATA, 'boostpad');
+const APPDATA = path.join(process.env.APPDATA, 'OpenW');
 const HOME = path.join(APPDATA, 'merge-test');
 const settings = JSON.parse(fs.readFileSync(path.join(APPDATA, 'settings.json'), 'utf8'));
 const cooked = game.cookedDir(settings.installDir);
 const keys = fs.existsSync(path.join(APPDATA, 'keys.txt')) ? upk.parseKeys(fs.readFileSync(path.join(APPDATA, 'keys.txt'), 'utf8')) : [];
 const ANGLES = arg('angles', 'kickoff,left,back,right,sky,edge').split(',');
 
-/* ---------- the tester's own engine, apart from the user's Boostpad changes ---------- */
+/* ---------- the tester's own engine, apart from the user's OpenW changes ---------- */
 fs.mkdirSync(HOME, { recursive: true });
 const engine = new Engine({
   store: new Store(path.join(HOME, 'state.json')), backupDir: path.join(HOME, 'backups'),
@@ -85,10 +85,10 @@ function rcon(command, timeout = 4000) {
   });
 }
 async function startBakkes() {
-  if (await rcon('echo boostpad')) return true;
+  if (await rcon('echo openw')) return true;
   const exe = 'C:\\Program Files\\BakkesMod\\BakkesMod.exe';
   if (!(await game.isProcessRunning('BakkesMod.exe'))) { log('starting BakkesMod'); spawn(exe, [], { detached: true, stdio: 'ignore' }).unref(); }
-  for (let i = 0; i < 90; i++) { await sleep(2000); if (await rcon('echo boostpad')) return true; }
+  for (let i = 0; i < 90; i++) { await sleep(2000); if (await rcon('echo openw')) return true; }
   return false;
 }
 

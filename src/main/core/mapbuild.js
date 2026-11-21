@@ -177,7 +177,7 @@ function shiftZ(P, d, dz) {
   const filler = Buffer.alloc(left);
   if (left) {
     // an ArrayProperty tag with a name that is no property: the game skips its bytes
-    filler.writeInt32LE(P.t.pkg.names.findIndex((x) => x.text === 'Boostpad') >= 0 ? idx('Boostpad') : iVector, 0);
+    filler.writeInt32LE(P.t.pkg.names.findIndex((x) => x.text === 'OpenW') >= 0 ? idx('OpenW') : iVector, 0);
     filler.writeInt32LE(iArray, 8); filler.writeInt32LE(left - 24, 16);
   }
   const block = Buffer.concat([...keep.map((p) => Buffer.from(p.bytes)), tag, filler, Buffer.from(none)]);

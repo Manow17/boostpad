@@ -19,7 +19,7 @@ const mapbuild = require('../src/main/core/mapbuild');
 const { readLabels, readTexts, applyLabels } = require('../src/main/core/labels');
 
 const sha = (f) => crypto.createHash('sha1').update(fs.readFileSync(f)).digest('hex');
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'boostpad-test-'));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'openw-test-'));
 let passed = 0, skipped = 0;
 const tests = [];
 function test(name, fn, skip) { tests.push({ name, fn, skip }); }
@@ -74,7 +74,7 @@ function makeEngine(cooked, running = { value: false }) {
     fs.mkdirSync(cooked);
     files = buildCatalog(real).items.filter((i) => i.category === 'wheels').map((i) => i.file)
       .sort((a, b) => a.length - b.length);
-    // Newer packages use keys Boostpad does not have; test with ones it can read.
+    // Newer packages use keys OpenW does not have; test with ones it can read.
     const readable = (f) => { try { upk.readPackageFile(path.join(real, f)); return true; } catch { return false; } };
     const mid = Math.floor(files.length / 2);
     files = [files.find(readable), files.slice(mid).find(readable), files.findLast(readable)];
@@ -264,7 +264,7 @@ function makeEngine(cooked, running = { value: false }) {
   }, !real);
 
   test('a swap is written with the key of the file it replaces', async () => {
-    const keysFile = path.join(process.env.APPDATA || '', 'boostpad', 'keys.txt');
+    const keysFile = path.join(process.env.APPDATA || '', 'OpenW', 'keys.txt');
     if (!fs.existsSync(keysFile)) return; // needs a key list to find two items with different keys
     const keys = upk.parseKeys(fs.readFileSync(keysFile, 'utf8'));
     const keyOf = (f) => upk.keyOfFile(path.join(real, f), keys).toString('hex');
@@ -272,7 +272,7 @@ function makeEngine(cooked, running = { value: false }) {
     const lunation = 'skin_IndigoD_SF.upk', cosmo = 'skin_bloodbros_SF.upk';
     if (!fs.existsSync(path.join(real, lunation)) || !fs.existsSync(path.join(real, cosmo))) return;
     const dir = fs.mkdtempSync(path.join(tmp, 'keys-'));
-    const backup = path.join(process.env.APPDATA, 'boostpad', 'backups', lunation.toLowerCase());
+    const backup = path.join(process.env.APPDATA, 'OpenW', 'backups', lunation.toLowerCase());
     fs.copyFileSync(fs.existsSync(backup) ? backup : path.join(real, lunation), path.join(dir, lunation)); // the original, even if swapped in the game
     fs.copyFileSync(path.join(real, cosmo), path.join(dir, cosmo));
     const wanted = upk.keyOfFile(path.join(dir, lunation), keys).toString('hex');
@@ -286,7 +286,7 @@ function makeEngine(cooked, running = { value: false }) {
   }, !real);
 
   test('arena names come from the game text; every-match covers standard arenas only', () => {
-    const keysFile = path.join(process.env.APPDATA || '', 'boostpad', 'keys.txt');
+    const keysFile = path.join(process.env.APPDATA || '', 'OpenW', 'keys.txt');
     const keys = fs.existsSync(keysFile) ? upk.parseKeys(fs.readFileSync(keysFile, 'utf8')) : [];
     const { maps } = readTexts(real, keys);
     if (!maps.size) return; // the game text needs a key list
@@ -334,38 +334,12 @@ function makeEngine(cooked, running = { value: false }) {
     assert.strictEqual(arenas.snowPlan(dfh, all).op.sourceGameFile, 'stadium_winter_p.upk');
   });
 
-  test('Steam shortcut file: read and written back exactly, our entry added and removed cleanly', () => {
-    const steam = require('../src/main/core/steam');
-    const { T } = steam;
-    const int = (v) => { const b = Buffer.alloc(4); b.writeUInt32LE(v); return b; };
-    // someone's existing shortcut, with a 64-bit field Boostpad does not know about
-    const root = [{ type: T.MAP, key: 'shortcuts', value: [{ type: T.MAP, key: '0', value: [
-      { type: T.INT, key: 'appid', value: int(2999999999) }, { type: T.STR, key: 'AppName', value: 'Epic Games Launcher' },
-      { type: T.STR, key: 'Exe', value: '"C:\\Epic\\EpicGamesLauncher.exe"' }, { type: T.U64, key: 'Something', value: Buffer.alloc(8, 7) },
-      { type: T.MAP, key: 'tags', value: [{ type: T.STR, key: '0', value: 'Games' }] }] }] }];
-    const file = steam.writeVdf(root);
-    assert.ok(steam.writeVdf(steam.parseVdf(file)).equals(file), 'round trip');
-    const added = steam.withShortcut(steam.parseVdf(file), { launcherExe: 'C:\\Epic\\EpicGamesLauncher.exe', rlExe: 'C:\\RL\\RocketLeague.exe' });
-    const back = steam.parseVdf(added.bytes);
-    const ours = steam.findOurs(back);
-    const field = (k) => ours.value.find((f) => f.key === k);
-    assert.strictEqual(ours.key, '1');
-    assert.strictEqual(field('LaunchOptions').value, steam.RL_LINK);
-    assert.strictEqual(field('appid').value.readUInt32LE(0), added.appid);
-    assert.ok(added.appid >= 0x80000000 && added.appid === steam.shortcutAppId('"C:\\Epic\\EpicGamesLauncher.exe"', steam.NAME));
-    assert.strictEqual(steam.gameId(added.appid), ((BigInt(added.appid) << 32n) | 0x02000000n).toString());
-    // adding twice keeps one entry; removing gives back the file as it was
-    const twice = steam.parseVdf(steam.withShortcut(back, { launcherExe: 'C:\\Epic\\EpicGamesLauncher.exe' }).bytes);
-    assert.strictEqual(twice[0].value.length, 2);
-    assert.ok(steam.withoutShortcut(twice).equals(file));
-  });
-
   test('ground under the new pitch is lowered, even when it has no position of its own', () => {
-    const keysFile = path.join(process.env.APPDATA || '', 'boostpad', 'keys.txt');
+    const keysFile = path.join(process.env.APPDATA || '', 'OpenW', 'keys.txt');
     const file = path.join(real || '', 'Outlaw_Oasis_OOB.upk');
     if (!fs.existsSync(keysFile) || !fs.existsSync(file)) return;
     const keys = upk.parseKeys(fs.readFileSync(keysFile, 'utf8'));
-    const backup = path.join(process.env.APPDATA, 'boostpad', 'backups', 'outlaw_oasis_oob.upk');
+    const backup = path.join(process.env.APPDATA, 'OpenW', 'backups', 'outlaw_oasis_oob.upk');
     const buf = fs.readFileSync(fs.existsSync(backup) ? backup : file);
     const P = mapbuild.open(buf, keys);
     const before = mapbuild.inventory(P).find((i) => i.name === 'OL_Terrain_Ground_Main');
@@ -379,11 +353,11 @@ function makeEngine(cooked, running = { value: false }) {
   }, !real);
 
   test('a map is taken apart and put back together without changing anything else', () => {
-    const keysFile = path.join(process.env.APPDATA || '', 'boostpad', 'keys.txt');
+    const keysFile = path.join(process.env.APPDATA || '', 'OpenW', 'keys.txt');
     const file = path.join(real || '', 'Farm_GRS_P.upk');
     if (!fs.existsSync(keysFile) || !fs.existsSync(file)) return;
     const keys = upk.parseKeys(fs.readFileSync(keysFile, 'utf8'));
-    const backup = path.join(process.env.APPDATA, 'boostpad', 'backups', 'farm_grs_p.upk');
+    const backup = path.join(process.env.APPDATA, 'OpenW', 'backups', 'farm_grs_p.upk');
     const buf = fs.readFileSync(fs.existsSync(backup) ? backup : file);
     // unchanged: every object comes back byte for byte
     const P = mapbuild.open(buf, keys);
@@ -407,13 +381,13 @@ function makeEngine(cooked, running = { value: false }) {
   }, !real);
 
   test('a copied arena file is written with the replaced file\'s key', async () => {
-    const keysFile = path.join(process.env.APPDATA || '', 'boostpad', 'keys.txt');
+    const keysFile = path.join(process.env.APPDATA || '', 'OpenW', 'keys.txt');
     if (!fs.existsSync(keysFile)) return;
     const keys = upk.parseKeys(fs.readFileSync(keysFile, 'utf8'));
     // two small arena parts that use different keys
     const parts = ['Music_Field.upk', 'Underwater_Field.upk', 'CS_Field.upk', 'Beach_Field.upk'].filter((f) => fs.existsSync(path.join(real, f)));
     const keyOf = (dir, f) => upk.keyOfFile(path.join(dir, f), keys).toString('hex');
-    const backups = path.join(process.env.APPDATA, 'boostpad', 'backups');
+    const backups = path.join(process.env.APPDATA, 'OpenW', 'backups');
     const original = (f) => (fs.existsSync(path.join(backups, f.toLowerCase())) ? path.join(backups, f.toLowerCase()) : path.join(real, f));
     const dir = fs.mkdtempSync(path.join(tmp, 'arena-'));
     for (const f of parts) fs.copyFileSync(original(f), path.join(dir, f));
@@ -504,6 +478,123 @@ function makeEngine(cooked, running = { value: false }) {
     assert.strictEqual(named, 3);
     assert.deepStrictEqual(items.map((i) => [i.label, i.sub]), [['Lunation', ''], ['Stripes', 'Fennec'], ['Fennec', ''], ['Unknown', '']]);
     assert.strictEqual(readLabels(path.join(tmp, 'nowhere')).size, 0, 'a missing text file gives no labels, not an error');
+  });
+
+  /* ---------- OpenW Input ---------- */
+  const TX = require('../src/shared/transform');
+  const inputLib = require('../src/main/input');
+
+  test('input: stick settings do what they say (dead zones, square diagonals, cross axes, anti-deadzone, curve)', () => {
+    const cfg = (patch) => TX.stickCfg({ ...TX.blank('t').sticks.left, ...patch });
+    const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} vs ${b}`);
+    // inside the inner dead zone nothing comes out; the edge minus the outer dead zone is full
+    assert.deepStrictEqual(TX.stick(0.05, 0.05, cfg({ inner: 10 })), [0, 0]);
+    near(TX.stick(0.95, 0, cfg({ inner: 10, outer: 5 }))[0], 1);
+    near(TX.stick(0.525, 0, cfg({ inner: 10, outer: 5 }))[0], 0.5);
+    // circle keeps a diagonal round; square takes it to the corner
+    const d = Math.SQRT1_2;
+    near(TX.stick(d, d, cfg({ inner: 0, outer: 0 }))[0], d);
+    near(TX.stick(d, d, cfg({ shape: 'square', inner: 0, outer: 0 }))[0], 1);
+    near(TX.stick(d, d, cfg({ shape: 'square', inner: 0, outer: 0 }))[1], 1);
+    // cross: a small sideways wobble on a straight push is cut, the push itself is not
+    const [cx, cy] = TX.stick(0.08, 0.9, cfg({ shape: 'cross', inner: 10, outer: 0 }));
+    assert.strictEqual(cx, 0); assert.ok(cy > 0.85);
+    // anti-deadzone: the first movement past the dead zone already gives that much
+    assert.ok(TX.stick(0.11, 0, cfg({ inner: 10, outer: 0, anti: 20 }))[0] >= 0.2);
+    // ... unless the buffer eases into it
+    assert.ok(TX.stick(0.11, 0, cfg({ inner: 10, outer: 0, anti: 20, buffer: 20 }))[0] < 0.05);
+    // relaxed curve is finer near the centre, aggressive quicker
+    assert.ok(TX.stick(0.5, 0, cfg({ inner: 0, outer: 0, curve: 'relaxed' }))[0] < 0.5);
+    assert.ok(TX.stick(0.5, 0, cfg({ inner: 0, outer: 0, curve: 'aggressive' }))[0] > 0.5);
+    // invert and single axis
+    assert.deepStrictEqual(TX.stick(0.5, 0.5, cfg({ inner: 0, outer: 0, invertY: true, axes: 'x' })).map((v) => +v.toFixed(4)), [0.5, 0]);
+    // triggers: range and hair-free curve
+    const t = TX.trigCfg({ ...TX.blank('t').triggers.left, start: 10, end: 90 });
+    assert.strictEqual(TX.trigger(0.05, t), 0); near(TX.trigger(0.5, t), 0.5); near(TX.trigger(0.95, t), 1);
+  });
+
+  test('input: the helper computes exactly what the page shows', () => {
+    const { execFileSync } = require('child_process');
+    // random settings of every kind, each checked on random sticks and triggers
+    let seed = 7;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+    const pick = (a) => a[Math.floor(rnd() * a.length)];
+    const lines = [], expect = [];
+    for (let k = 0; k < 60; k++) {
+      const p = TX.blank('t');
+      Object.assign(p.sticks.left, { shape: pick(['circle', 'cross', 'square']), inner: Math.round(rnd() * 40), outer: Math.round(rnd() * 20), curve: pick(['linear', 'aggressive', 'relaxed', 'wide', 'extrawide', 'custom']),
+        exponent: 0.3 + rnd() * 3, anti: Math.round(rnd() * 40), buffer: Math.round(rnd() * 30), scaleX: 50 + Math.round(rnd() * 150), scaleY: 50 + Math.round(rnd() * 150), invertX: rnd() < 0.3, invertY: rnd() < 0.3, axes: pick(['both', 'x', 'y']) });
+      Object.assign(p.triggers.left, { start: Math.round(rnd() * 50), end: 50 + Math.round(rnd() * 50), curve: pick(['linear', 'wide', 'custom']), exponent: 0.3 + rnd() * 3 });
+      lines.push(...TX.lines(p).filter((l) => !l.startsWith('button')));
+      // the helper gets settings rounded to 4 places, so the page's maths uses the same numbers
+      const sc = Object.fromEntries(Object.entries(TX.stickCfg(p.sticks.left)).map(([key, v]) => [key, +v.toFixed(4)]));
+      const tc = Object.fromEntries(Object.entries(TX.trigCfg(p.triggers.left)).map(([key, v]) => [key, +v.toFixed(4)]));
+      for (let j = 0; j < 20; j++) {
+        const x = +(rnd() * 2 - 1).toFixed(4), y = +(rnd() * 2 - 1).toFixed(4), tv = +rnd().toFixed(4);
+        lines.push(`in 0 ${x} ${y}`, `tin 0 ${tv}`);
+        expect.push(TX.stick(x, y, sc), TX.trigger(tv, tc));
+      }
+    }
+    const out = execFileSync(inputLib.EXE, ['--transform'], { input: `${lines.join('\n')}\n`, encoding: 'utf8' }).trim().split(/\r?\n/);
+    assert.strictEqual(out.length, expect.length);
+    out.forEach((line, i) => {
+      const got = line.split(' ').slice(1).map(Number), want = [].concat(expect[i]);
+      want.forEach((w, j) => assert.ok(Math.abs(got[j] - w) < 2e-6, `line ${i}: helper ${line}, page ${want.join(' ')}`));
+    });
+  }, !fs.existsSync(inputLib.EXE));
+
+  test('input: profiles become the helper\'s lines, and old or pasted ones are completed', () => {
+    const p = TX.blank('Test');
+    p.buttons.A = { ...p.buttons.A, to: 'B', turbo: true, rate: 15, hold: 'Y', holdMs: 300 };
+    p.sticks.left.ring = { to: 'LB', at: 80, invert: true };
+    p.light = '#ff8000';
+    const l = TX.lines(p);
+    assert.strictEqual(l[l.length - 1], 'apply');
+    assert.strictEqual(l.filter((x) => x.startsWith('button ')).length, TX.SOURCES.length);
+    assert.strictEqual(l.find((x) => x.startsWith('button 0 ')), `button 0 ${TX.OUT.B} 1 15 0 ${TX.OUT.Y} 300`);
+    assert.ok(l[0].endsWith(` 0.8 1 ${TX.OUT.LB} 0`), l[0]);
+    assert.ok(l.includes('light 255 128 0'));
+    assert.strictEqual(l.find((x) => x.startsWith('button 15 ')).split(' ')[2], String(TX.OUT.Back), 'touchpad click is View by default');
+    const old = TX.complete({ name: 'Old', sticks: { left: { inner: 20 } } });
+    assert.strictEqual(old.sticks.left.inner, 20);
+    assert.strictEqual(old.sticks.left.shape, 'circle');
+    assert.strictEqual(old.sticks.right.output, 'right');
+    assert.strictEqual(old.buttons.Guide.to, 'Guide');
+  });
+
+  test('input: the helper\'s messages are understood', () => {
+    const inp = new inputLib.Input(path.join(tmp, 'nowhere.exe'));
+    const seen = [];
+    inp.on('status', (s) => seen.push(s));
+    inp.on('state', (s) => seen.push(s));
+    inp.line('vigem ok 1');
+    inp.line('pad dualsense bt 0');
+    inp.line('state 0.1 -0.2 0 0 0.5 1 3 0.12 -0.25 0 0 0.6 1 4096');
+    inp.line('pad none');
+    assert.strictEqual(seen[0].vigem, true);
+    assert.deepStrictEqual(seen[1].pad, { kind: 'dualsense', conn: 'bt' });
+    assert.deepStrictEqual(seen[2].raw, [0.1, -0.2, 0, 0, 0.5, 1]);
+    assert.strictEqual(seen[2].outButtons, 4096);
+    assert.strictEqual(seen[3].pad, null);
+    assert.throws(() => inp.start(TX.blank('x')), /missing/);
+  });
+
+  test('input: HidHide\'s controller list is grouped per controller, with what is hidden marked', () => {
+    const json = [
+      { friendlyName: 'Wireless Controller', devices: [
+        { present: true, gamingDevice: true, deviceInstancePath: 'HID\\VID_054C&PID_09CC&MI_03\\8&1', baseContainerDeviceInstancePath: 'USB\\VID_054C&PID_09CC\\5&2' },
+        { present: true, gamingDevice: true, deviceInstancePath: 'HID\\VID_054C&PID_09CC&MI_03&Col02\\8&1', baseContainerDeviceInstancePath: 'USB\\VID_054C&PID_09CC\\5&2' }] },
+      { friendlyName: 'Xbox 360 Controller for Windows', devices: [
+        { present: true, gamingDevice: true, deviceInstancePath: 'USB\\VID_045E&PID_028E\\1&2', baseContainerDeviceInstancePath: 'USB\\VID_045E&PID_028E\\1&2' }] },
+      { friendlyName: 'Gone', devices: [{ present: false, deviceInstancePath: 'HID\\VID_1234&PID_5678\\1' }] },
+    ];
+    const list = inputLib.controllers(json, ['hid\\vid_054c&pid_09cc&mi_03\\8&1']);
+    assert.strictEqual(list.length, 2);
+    assert.deepStrictEqual(list[0].paths, ['HID\\VID_054C&PID_09CC&MI_03\\8&1', 'USB\\VID_054C&PID_09CC\\5&2', 'HID\\VID_054C&PID_09CC&MI_03&Col02\\8&1']);
+    assert.strictEqual(list[0].hidden, true);
+    assert.strictEqual(list[0].name, 'Wireless Controller');
+    assert.strictEqual(list[1].virtual, true);
+    assert.strictEqual(inputLib.decode(Buffer.from('﻿--cloak-on', 'utf16le')), '--cloak-on');
   });
 
   await runAll();

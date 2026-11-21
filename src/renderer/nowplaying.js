@@ -33,8 +33,8 @@ function configure(cfg) {
   paint();
 }
 
-window.boostpad.on('media', (state) => { media = state; paint(); });
-window.boostpad.on('overlay-config', configure);
-window.boostpad.call('overlayConfig', 'music').then(configure);
-window.boostpad.call('mediaState').then((state) => { media = state; paint(); });
+window.openw.on('media', (state) => { media = state; paint(); });
+window.openw.on('overlay-config', configure);
+window.openw.call('overlayConfig', 'music').then(configure);
+window.openw.call('mediaState').then((state) => { media = state; paint(); });
 setInterval(tick, 1000);

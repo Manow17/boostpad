@@ -17,6 +17,6 @@ function frame() {
   requestAnimationFrame(frame);
 }
 
-window.boostpad.on('overlay-config', configure);
-window.boostpad.call('overlayConfig', 'pad').then(configure);
+window.openw.on('overlay-config', configure);
+window.openw.call('overlayConfig', 'pad').then(configure);
 requestAnimationFrame(frame);

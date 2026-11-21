@@ -60,7 +60,7 @@ if ($action -ne 'watch') {
 # Which program's window is in front. Asks Windows; does not touch the program itself.
 $canSeeFront = $true
 try {
-  Add-Type -Namespace Boostpad -Name Front -MemberDefinition @'
+  Add-Type -Namespace OpenW -Name Front -MemberDefinition @'
 [DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint processId);
 '@
@@ -69,7 +69,7 @@ function Get-Front {
   if (-not $canSeeFront) { return '' }
   try {
     $id = [uint32]0
-    $null = [Boostpad.Front]::GetWindowThreadProcessId([Boostpad.Front]::GetForegroundWindow(), [ref]$id)
+    $null = [OpenW.Front]::GetWindowThreadProcessId([OpenW.Front]::GetForegroundWindow(), [ref]$id)
     (Get-Process -Id $id).ProcessName
   } catch { '' }
 }

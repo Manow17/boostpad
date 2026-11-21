@@ -56,7 +56,7 @@ function readLabels(cookedDir, extraKeys = []) {
 }
 
 /**
- * Everything Boostpad takes from the game's text in one pass:
+ * Everything OpenW takes from the game's text in one pass:
  *   labels  package name -> item name ("skin_indigod" -> "Lunation")
  *   maps    arena file   -> arena name as the game shows it ("cs_day_p" -> "Champions Field (Day)")
  * Keys are lower-cased. Both are empty when the file cannot be read.

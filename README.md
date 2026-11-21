@@ -1,10 +1,12 @@
-# Boostpad
+# OpenW
 
 A free, open-source cosmetic mod manager for Rocket League on Windows (Epic Games and Steam).
 
-No account, no subscription, no server. Everything runs on your PC, and every game file Boostpad changes is backed up first and can be put back with one click.
+No account, no subscription, no server. Everything runs on your PC, and every game file OpenW changes is backed up first and can be put back with one click.
 
-> **Status: early (v0.1).** The app, the backup engine, workshop maps, mod packs, presets, tracker, overlay and profile cards work. **Item swaps are experimental and have not been confirmed in game yet** — see [What works](#what-works) before you rely on them.
+OpenW used to be called Boostpad. On its first start it moves the old data folder (`%APPDATA%\boostpad`: settings, the record of every change, and the backups of original game files) to `%APPDATA%\OpenW`; if the folder is in use it is copied instead and the old one is left as it was.
+
+> **Status: early (v0.3).** The app, the backup engine, workshop maps, mod packs, presets, tracker, overlay and profile cards work. **Item swaps are experimental and have not been confirmed in game yet** — see [What works](#what-works) before you rely on them.
 
 | Dark | Light |
 | --- | --- |
@@ -14,10 +16,10 @@ No account, no subscription, no server. Everything runs on your PC, and every ga
 
 ## Read this first
 
-- Rocket League runs with Easy Anti-Cheat. Boostpad does **not** touch, disable or work around it, and it never injects into or reads the running game. It only replaces files on disk while the game is closed.
+- Rocket League runs with Easy Anti-Cheat. OpenW does **not** touch, disable or work around it, and it never injects into or reads the running game. It only replaces files on disk while the game is closed.
 - Changing game files may break Rocket League's terms of service and could put your account at risk. Nobody can promise modified files are accepted online. **Use it at your own risk.**
 - Your launcher's "Verify files" always restores a clean install.
-- Boostpad is a fan project, not affiliated with or endorsed by Psyonix or Epic Games.
+- OpenW is a fan project, not affiliated with or endorsed by Psyonix or Epic Games.
 
 ## Features
 
@@ -26,12 +28,22 @@ No account, no subscription, no server. Everything runs on your PC, and every ga
 | **Garage** | Give an item you own the look of another item (cars, wheels, boosts, decals, toppers, antennas, engine sounds, trails, goal explosions, paint finishes, banners, borders, anthems). Items are shown with their real names and pictures, read from your own game files, and each section lists only its own items. A search stays in the section you are in and tells you which other sections also have a match. Once you pick your item, only the looks that work with it are listed. Everything applied or queued is listed there with a Revert button. |
 | **Workshop Maps** | Load a training/challenge map into the Underpass slot and play it from Free Play. |
 | **Map Merge** | Mix the game's own arenas: put the stadium of any soccar arena into the surroundings of any other, make an arena snowy where the game has a snowy version, or see the same arena, merged ones too, in every match. Arenas are listed under the names the game uses, and each change says which arena to play to see it. Experimental. |
-| **Controller** | Steam Input for the Epic version, for Steam's own stick settings (square dead zone, outer ring, anti-deadzone, response curve). Boostpad adds a Steam shortcut, "Rocket League (Steam Input)", that starts the Epic Games Launcher with Rocket League, which is how Steam Input reaches Epic games; the Play button can start the game that way. Steam is closed while its shortcut file is changed (it rewrites the file on exit), and a copy of the file is kept. The Epic launcher must be closed when the game starts, or Steam never sees the game. Not checked with a controller yet. |
+| **Controller** | **OpenW Input**: a controller remapper with Steam Input's stick, trigger and button options and more, for any game, Epic or Steam. It reads your Xbox, DualShock 4, DualSense or DualSense Edge controller and plays the result on a virtual Xbox controller. Profiles, live view of what your stick does and what the game gets. See [OpenW Input](#openw-input). |
 | **Presets** | Save everything that is active and switch setups in one click. Unlimited. Copy a preset as a code to pass it on. |
 | **Swap queue** | Changes made while the game is running wait and go in when it closes. |
 | **Overlay** | Click-through windows over the game, shown only while Rocket League is the window in front. A now-playing pill for your music, and a top-down PS5, PS4 or Xbox controller (picked automatically from the one plugged in) that lights up with your inputs. Each has its own position (drag it, or pick a corner), size and look. |
 | **Profile** | A profile card with any name, title, colour, glow, rank badge and picture. It lives in the app. |
 | **Themes** | Dark or light. Both use the icon's turquoise; the light theme adds charcoal blocks. |
+
+### OpenW Input
+
+OpenW Input is a small helper (`native/openw-input.cpp`, built to `bin/openw-input.exe`) that OpenW runs while it is switched on. It reads your controller (Xbox and other XInput controllers through XInput; DualShock 4, DualSense and DualSense Edge as raw HID reports, over USB or Bluetooth), runs every report through your profile at once, and sends the result to a virtual Xbox 360 controller. Nothing waits for a timer, so it adds no frame of delay.
+
+Per stick, as in Steam Input: dead zone shape (circle; cross, where each axis has its own dead zone; square, where diagonals reach full on both axes), inner and outer dead zone, response curve (Linear, Aggressive, Relaxed, Wide, Extra Wide, or a custom exponent), output anti-deadzone and its buffer, horizontal and vertical sensitivity, invert, output joystick (swap sticks or turn one off), output axis, and an outer ring button. More than Steam: smoothing for a shaky stick. Per trigger: range start and end, response curve, hair trigger, output trigger. Per button: any Xbox button or a full trigger pull, a long-press binding with its own hold time, turbo with a rate, and toggle; the touchpad click, mute button and the Edge's Fn buttons and back paddles can be bound too. Rumble the game sends comes back to your controller at the strength you set, and PlayStation lightbars take the colour you pick. Profiles can be copied as a code.
+
+The curve names are Steam's; their exponents (Aggressive 0.6, Relaxed 1.5, Wide 2, Extra Wide 3) are OpenW's own approximation, as Steam does not publish its numbers. The page draws each setting with the same maths the helper uses, and a test checks the two agree.
+
+It needs two free drivers by Nefarius Software Solutions, the ones DS4Windows uses, which you install yourself: **[ViGEmBus](https://github.com/nefarius/ViGEmBus/releases)** for the virtual controller, and **[HidHide](https://github.com/nefarius/HidHide/releases)** to hide your real controller from games, so they do not get every press twice. The page links both. Hiding goes through HidHide's own command line, run elevated (Windows asks each time), lets only the helper see the controller, and stays until you show it again on the page. Rocket League's own controller dead zone is best turned down, since OpenW Input handles it.
 
 ### Music in the overlay
 
@@ -41,13 +53,13 @@ The now-playing pill reads Windows' own media controls, so there is no login and
 
 Any two standard soccar arenas can be merged (61 on the test machine), strictly: only the stadium of the arena you pick as the stadium shows (pitch, walls, goals, stands, crowd), and around it only the outside, sky and fog of the arena you place it in. Nothing of the stadium arena's outside and nothing of the other arena's stadium comes along.
 
-Every merge is built at the object level (`src/main/core/mapbuild.js`). Arenas are a main `_P` map plus part files it loads by name (`_Field`, `_OOB`, effects, sound); older ones keep stadium and outside together in the main map. Boostpad reads both arenas and sorts every placed piece:
+Every merge is built at the object level (`src/main/core/mapbuild.js`). Arenas are a main `_P` map plus part files it loads by name (`_Field`, `_OOB`, effects, sound); older ones keep stadium and outside together in the main map. OpenW reads both arenas and sorts every placed piece:
 
 - **Where each stadium is.** An arena's stadium is the pitch area (walls and goals) plus the footprint of each of its stands, measured from the map: every mesh named like stands or crowd, placed with its component's translation, rotation and scale, mirrored both ways. Parc de Paris has stands only behind the goals, so its open park sides are outside, not stadium.
 - **Stadium side.** Pieces mostly inside that region stay, plus flat ground centred under it and pieces named after the stadium that stick out a little (outer arches). Anything named OOB, the sky, clouds and fog are hidden. Gameplay (boost pads, goals, spawns, collision) and the stadium's lights stay.
 - **Outside side.** Pieces inside either stadium are hidden, so nothing of the place arena's stadium shows and nothing stands inside the new one. Sky, clouds and fog stay; gameplay and lights are taken out of the level. Big flat ground below the pitch stays, so the stadium does not float over a hole.
 
-The place arena stays its own map: its main file keeps everything (sky, lights, fog, surroundings, gameplay, collision) except its stadium pieces and anything standing where the new stadium goes. Its stadium file (and, when more room is needed, a sound part, whose background sounds then go quiet) is renamed in its name table to new files Boostpad adds, holding only the stadium arena's stadium pieces: from its stadium file, its main map and any part that holds some of its stadium (Champions Field's upper ring is in CS_OOB2), without their gameplay, lights, sky or fog. The place arena's outside parts load as filtered copies; its effects and lights parts load as they are. A place arena with no stadium file and no sound part (Mannfield and Mannfield (Dusk) are single files) gets the other way round: the stadium arena's map is the base and the place arena's map, sky included, loads in its parts; its light and fog are then the stadium arena's, and the page says so. Every edit keeps sizes the same (a mesh reference set to none, an actor reference cleared, a name shortened in place), so only the compressed chunks and the chunk table change; added files use the game's common key and are deleted again on revert.
+The place arena stays its own map: its main file keeps everything (sky, lights, fog, surroundings, gameplay, collision) except its stadium pieces and anything standing where the new stadium goes. Its stadium file (and, when more room is needed, a sound part, whose background sounds then go quiet) is renamed in its name table to new files OpenW adds, holding only the stadium arena's stadium pieces: from its stadium file, its main map and any part that holds some of its stadium (Champions Field's upper ring is in CS_OOB2), without their gameplay, lights, sky or fog. The place arena's outside parts load as filtered copies; its effects and lights parts load as they are. A place arena with no stadium file and no sound part (Mannfield and Mannfield (Dusk) are single files) gets the other way round: the stadium arena's map is the base and the place arena's map, sky included, loads in its parts; its light and fog are then the stadium arena's, and the page says so. Every edit keeps sizes the same (a mesh reference set to none, an actor reference cleared, a name shortened in place), so only the compressed chunks and the chunk table change; added files use the game's common key and are deleted again on revert.
 
 Sorting is by name and position, so an odd piece can still land on the wrong side. Checked in game on the test machine with the earlier, looser sorting (0.1.2-0.1.5): stadium-file swaps (Neon Fields in AquaDome, Fire & Ice in Salty Shores (Night)) and whole-arena swaps load and play. 0.1.6 used the stadium arena's map as the base, which left the sky black when the place arena's main map did not fit (Beckwith Park (Snowy) in Forbidden Temple (Day)); 0.1.7 keeps the place arena's map. Checked against the real maps (what each side keeps), **not in game yet**. Hoops, Dropshot, Snow Day and odd-shaped arenas are left out, because the pitch shape comes with the stadium.
 
@@ -67,19 +79,20 @@ Changes are written while Rocket League is closed. The game keeps the arena file
 | Item swaps | **Experimental.** The package rewrite is tested structurally (see below) but nobody has yet confirmed the result in game |
 | Workshop maps | File replacement is tested; whether a given map loads depends on the file |
 | Overlays, profile | Working. The now-playing reader is tested against a real Windows media session (title, artist, cover, pause) and the controller drawing against a real pad; the overlays have not been checked over the running game |
+| OpenW Input | **New.** The helper reads a DualShock 4 over USB on the test machine and its settings maths is tested against the page's. The virtual controller, HidHide, rumble, lightbars, Bluetooth, DualSense and Xbox controllers have not been checked yet, as the test machine has neither driver installed |
 | Map Merge | **Experimental.** The arena scan and the file replacement are tested; stadium and whole-arena merges have been checked in game on one or two arenas, not on every pair; built merges are covered by a round-trip test on a real map but not checked in game yet. Same arena every match is checked on one arena; the snowy versions are the game's own arenas |
 
-Fixed in 0.1.1: when the item you own and the new look were encrypted with different keys, 0.1.0 wrote the swapped file with the wrong one and the game crashed when it loaded the item. Swaps and arena changes are now written with the key of the file they replace, and anything 0.1.0 wrote wrongly is rebuilt automatically the next time Boostpad runs with the game closed.
+Fixed in 0.1.1: when the item you own and the new look were encrypted with different keys, 0.1.0 wrote the swapped file with the wrong one and the game crashed when it loaded the item. Swaps and arena changes are now written with the key of the file they replace, and anything 0.1.0 wrote wrongly is rebuilt automatically the next time OpenW runs with the game closed.
 
 Known limits of item swaps in this version:
 
 - **The game must be closed.** If Rocket League is open the swap is queued and applied when you close it; you see it the next time you start the game.
 - A swap renames the new look's package to your item's name **in place**, so your item's internal name must not be longer than the new look's (for example Standard boost -> Alpha Reward works, Octane -> Venom does not). On the test machine about half the looks in a category work for a given item. The Garage lists only those once you have picked your item.
-- Boostpad ships one decryption key, the long-published community one, which opens roughly two thirds of items. The rest show a lock instead of a picture and cannot be used as a new look. If you have a key list (a `keys.txt`, one key per line in hex or base64, as published by community tools), add it under **Settings -> Item pictures and keys**; on the test machine that raised coverage to about 97%. Key lists are not included in this repository.
+- OpenW ships one decryption key, the long-published community one, which opens roughly two thirds of items. The rest show a lock instead of a picture and cannot be used as a new look. If you have a key list (a `keys.txt`, one key per line in hex or base64, as published by community tools), add it under **Settings -> Item pictures and keys**; on the test machine that raised coverage to about 97%. Key lists are not included in this repository.
 - Other community tools that swap items the same way report that **car body and goal explosion swaps can crash the game**. Treat those two categories as the riskiest.
 - Item names come from the game's own English text file, which needs a key from a key list. With only the built-in key, items are listed under their internal file names (some cars have code names).
 
-Not implemented: custom paint colours, 3D garage preview, custom balls and sounds, stadium colours, and changing your name, title or rank **inside** the game. The last one would need code injected into the running game, which Boostpad does not do.
+Not implemented: custom paint colours, 3D garage preview, custom balls and sounds, stadium colours, and changing your name, title or rank **inside** the game. The last one would need code injected into the running game, which OpenW does not do.
 
 ## Run it
 
@@ -92,13 +105,19 @@ npm install
 npm start
 ```
 
-To find Boostpad from the Windows Start Menu (search for "Boostpad"), add a shortcut once:
+To find OpenW from the Windows Start Menu (search for "OpenW"), add a shortcut once:
 
 ```
 npm run shortcut
 ```
 
 It starts this copy of the app, so keep the folder where it is. `npm run shortcut -- --remove` takes it away again.
+
+`bin/openw-input.exe` is included. To build it again from `native/openw-input.cpp` (needs the Visual Studio C++ build tools):
+
+```
+npm run build-input
+```
 
 Run the tests (they copy a few packages to a temp folder and never write to your game):
 
@@ -114,13 +133,13 @@ Checks merged arenas in the game, many at a time, without anyone playing them:
 npm run merge-test -- --rounds 1
 ```
 
-Each round merges every standard arena once as the stadium and once as the place (about 60 merges, each arena's place file touched once, so they never collide), restarts Rocket League once (it reads arena files at start), starts BakkesMod, loads each merged arena in Free Play over BakkesMod's RCON (`load_freeplay`), and takes screenshots: kickoff, left, back, right, sky, at a side wall and over it. Each arena gets one contact sheet; `index.html` in `%APPDATA%\boostpad\merge-test\runs\<time>` lists them, the darkest (holes, black sky) first, and `report.json` has the details. `--round 2` uses the next pairing, `--pairs stadium_id:place_id,...` tests chosen pairs, `--mouse` tunes how far the camera turns, `--keep` leaves the last round in place.
+Each round merges every standard arena once as the stadium and once as the place (about 60 merges, each arena's place file touched once, so they never collide), restarts Rocket League once (it reads arena files at start), starts BakkesMod, loads each merged arena in Free Play over BakkesMod's RCON (`load_freeplay`), and takes screenshots: kickoff, left, back, right, sky, at a side wall and over it. Each arena gets one contact sheet; `index.html` in `%APPDATA%\OpenW\merge-test\runs\<time>` lists them, the darkest (holes, black sky) first, and `report.json` has the details. `--round 2` uses the next pairing, `--pairs stadium_id:place_id,...` tests chosen pairs, `--mouse` tunes how far the camera turns, `--keep` leaves the last round in place.
 
-It presses keys and moves the mouse in the game window, so run it when nobody is using the PC. Its merges are tracked apart from yours (its own records and backups in `%APPDATA%\boostpad\merge-test`), arenas you changed yourself are left out, and everything it wrote is reverted at the end, after an error too. Needs BakkesMod with its RCON plugin on.
+It presses keys and moves the mouse in the game window, so run it when nobody is using the PC. Its merges are tracked apart from yours (its own records and backups in `%APPDATA%\OpenW\merge-test`), arenas you changed yourself are left out, and everything it wrote is reverted at the end, after an error too. Needs BakkesMod with its RCON plugin on.
 
 ## How a swap works
 
-Each item is a package file such as `WHEEL_Star_SF.upk` whose contents answer to the name `WHEEL_Star`. To make item A look like item B, Boostpad takes B's package, renames `B` to `A` in its name table, and writes the result over A's file. The rename keeps the exact byte size (shorter names are padded), so nothing else in the file moves and the compressed data is never rewritten. A's original file is copied to Boostpad's data folder first.
+Each item is a package file such as `WHEEL_Star_SF.upk` whose contents answer to the name `WHEEL_Star`. To make item A look like item B, OpenW takes B's package, renames `B` to `A` in its name table, and writes the result over A's file. The rename keeps the exact byte size (shorter names are padded), so nothing else in the file moves and the compressed data is never rewritten. A's original file is copied to OpenW's data folder first.
 
 ## Project layout
 
@@ -129,7 +148,10 @@ src/main/core/   game.js (find game)  upk.js (package reader/patcher)  engine.js
                  catalog.js (items)   labels.js (item names)   thumbs.js (item pictures)   arenas.js (map merge, snow)
                  library.js (workshop maps)  store.js (settings)
 src/main/        main.js (window, IPC)  preload.js  media.js + media.ps1 (now playing, via Windows)
+                 input.js (runs the input helper, drivers, HidHide)
+src/shared/      transform.js (OpenW Input's stick and trigger maths and profiles, used by the page and main)
 src/renderer/    app.js, styles.css, pad.js (controller drawing), overlay + nowplaying (overlay windows)
+native/          openw-input.cpp (the input helper; built to bin/ with `npm run build-input`)
 assets/          app icon (icon-source.webp, turned into icon.png with `npm run icon`), fonts, and
                  controllers/ (MIT drawings, credits in CREDITS.md; rebuilt with `node scripts/prepare-controllers.js`)
 test/            core tests

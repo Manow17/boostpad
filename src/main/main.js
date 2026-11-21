@@ -10,14 +10,14 @@ const mediaBridge = require('./media');
 const upk = require('./core/upk');
 const { Maps, MAP_SLOT } = require('./core/library');
 const arenas = require('./core/arenas');
-const steam = require('./core/steam');
 const mapbuild = require('./core/mapbuild');
 const { readLabels, readTexts, applyLabels } = require('./core/labels');
+const T = require('../shared/transform');
+const inputLib = require('./input');
 
 const DEFAULTS = {
   platform: null,
   installDir: null,
-  steamInput: false, // Play starts Rocket League through Steam, for Steam Input
 
   theme: { mode: 'dark' },
   presets: [],
@@ -27,6 +27,8 @@ const DEFAULTS = {
     pad: { on: false, model: 'auto', x: null, y: null, size: 100, opacity: 100, body: '#14161b', keys: '#23262d', glow: '#00d8c8' },
     music: { on: false, x: null, y: null, size: 100, source: 'auto' },
   },
+  // OpenW Input: profiles of stick, trigger and button settings (src/shared/transform.js)
+  input: { on: false, profile: 'standard', profiles: [{ ...T.TEMPLATES.standard(), id: 'standard' }], hidden: [] },
 };
 
 const arg = (name) => {
@@ -35,8 +37,25 @@ const arg = (name) => {
 };
 const smokeShot = arg('smoke'); // --smoke=<png path>: render once, save a screenshot, quit
 if (arg('data')) app.setPath('userData', path.resolve(arg('data')));
+else moveOldData();
+
+// OpenW was called Boostpad. Its data folder (settings, the record of every change and the
+// backups of the original game files) moves to the new name once, before anything reads it.
+function moveOldData() {
+  const old = path.join(app.getPath('appData'), 'boostpad');
+  const now = app.getPath('userData');
+  if (!fs.existsSync(old) || fs.existsSync(path.join(now, 'state.json')) || fs.existsSync(path.join(now, 'settings.json'))) return;
+  try {
+    if (fs.existsSync(now)) fs.cpSync(old, now, { recursive: true, force: false, errorOnExist: false });
+    else fs.renameSync(old, now);
+  } catch {
+    // a file in use (another copy running): copy what can be copied, keep the old folder
+    try { fs.cpSync(old, now, { recursive: true, force: false, errorOnExist: false }); } catch { /* starts fresh */ }
+  }
+}
 
 let win = null, settings, engine, maps, catalog = null, arenaList = null, running = false;
+const input = new inputLib.Input();
 
 const ACCENT = '#00d8c8';
 const ICON = path.join(__dirname, '..', '..', 'assets', 'icon.png');
@@ -68,7 +87,7 @@ function thumbnail(file) {
   return jpg.length ? jpg : null;
 }
 
-// Extra decryption keys the user has added (keys.txt in the data folder). Boostpad
+// Extra decryption keys the user has added (keys.txt in the data folder). OpenW
 // ships only the long-published default key; newer items need a key list.
 let extraKeys = [];
 const keysFile = () => path.join(app.getPath('userData'), 'keys.txt');
@@ -87,6 +106,8 @@ function retryMissingThumbs() {
 }
 
 const cooked = () => (settings.get('installDir') ? game.cookedDir(settings.get('installDir')) : null);
+const inputProfile = () => { const i = settings.get('input'); return T.complete(i.profiles.find((p) => p.id === i.profile) || i.profiles[0]); };
+const saveInput = (patch) => settings.set('input', { ...settings.get('input'), ...patch });
 const send = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
 
 // Lists the items and checks which packages are readable. The check is remembered
@@ -115,7 +136,7 @@ async function buildIndex() {
 
 const rlExe = () => { const dir = settings.get('installDir'); return dir ? path.join(dir, 'Binaries', 'Win64', 'RocketLeague.exe') : null; };
 
-// Game files Boostpad has changed, or will change when the game closes: file (lower case) -> op.
+// Game files OpenW has changed, or will change when the game closes: file (lower case) -> op.
 function arenaChanges() {
   const { active, queue } = engine.list();
   const out = new Map(active.map((r) => [r.key, r.op]));
@@ -401,11 +422,11 @@ const api = {
   presetExport(id) {
     const p = settings.get('presets').find((x) => x.id === id);
     // only swaps are portable: file ops point at paths on this PC
-    return JSON.stringify({ boostpadPreset: 1, name: p.name, ops: p.ops.filter((o) => o.kind === 'swap') });
+    return JSON.stringify({ openwPreset: 1, name: p.name, ops: p.ops.filter((o) => o.kind === 'swap') });
   },
   presetImport(text) {
     const data = JSON.parse(text);
-    if (data.boostpadPreset !== 1 || !Array.isArray(data.ops)) throw new Error('Not a Boostpad preset');
+    if ((data.openwPreset ?? data.boostpadPreset) !== 1 || !Array.isArray(data.ops)) throw new Error('Not an OpenW preset');
     const ops = data.ops.filter((o) => o.kind === 'swap' && typeof o.sourceFile === 'string' && typeof o.targetFile === 'string')
       .map((o) => ({ kind: 'swap', sourceFile: path.basename(o.sourceFile), targetFile: path.basename(o.targetFile), label: String(o.label || ''), category: String(o.category || '') }));
     const presets = settings.get('presets');
@@ -425,30 +446,90 @@ const api = {
     return `data:image/${ext};base64,${fs.readFileSync(file).toString('base64')}`;
   },
 
-  // Play: through Steam (for Steam Input) when that is switched on, otherwise the store's own link
-  async launchGame() {
-    if (settings.get('steamInput') && settings.get('platform') === 'epic') {
-      const st = await steam.status(rlExe());
-      if (st.added && st.gameId) {
-        if (await game.isRunning()) return { ok: true };
-        if (st.epicOpen) { const e = new Error('Close the Epic Games Launcher first, so Steam can start it and give the game Steam Input.'); e.code = 'EPIC_OPEN'; throw e; }
-        shell.openExternal(`steam://rungameid/${st.gameId}`);
-        return { ok: true, via: 'steam' };
-      }
-    }
+  launchGame() {
     shell.openExternal(game.launchUrl(settings.get('platform')));
     return { ok: true };
   },
-  // Controller: Steam Input through a Steam shortcut
-  steamState: () => steam.status(rlExe()),
-  async steamShortcut(add) {
-    await steam.setShortcut(!!add, { rlExe: rlExe(), backupDir: path.join(app.getPath('userData'), 'backups') });
-    if (!add) settings.set('steamInput', false);
-    return steam.status(rlExe());
-  },
-  async closeEpicLauncher() { await steam.closeLauncher(); return steam.status(rlExe()); },
-  steamControllerSettings(appid) { shell.openExternal(`steam://controllerconfig/${Number(appid) >>> 0}`); },
   openDataFolder() { shell.openPath(app.getPath('userData')); },
+
+  // ---- OpenW Input: the controller remapper ----
+  async inputInfo() { return { status: input.status, drivers: await inputLib.drivers() }; },
+  inputStart() { input.start(inputProfile()); saveInput({ on: true }); return snapshot(); },
+  inputStop() { input.stop(); saveInput({ on: false }); return snapshot(); },
+  inputWatch(on) { input.watch(!!on); },
+  // a setting changed: saved, and the helper gets it at once
+  inputSave(profile) {
+    const p = T.complete(profile), i = settings.get('input');
+    if (!i.profiles.some((x) => x.id === p.id)) throw new Error('That profile is gone.');
+    saveInput({ profiles: i.profiles.map((x) => (x.id === p.id ? p : x)) });
+    if (p.id === i.profile && input.running) input.configure(p);
+    return true;
+  },
+  // while a slider moves: the helper gets it, nothing is saved yet
+  inputPreview(profile) { if (input.running && profile.id === settings.get('input').profile) input.configure(T.complete(profile)); },
+  inputSelect(id) {
+    if (!settings.get('input').profiles.some((x) => x.id === id)) throw new Error('That profile is gone.');
+    saveInput({ profile: id });
+    if (input.running) input.configure(inputProfile());
+    return snapshot();
+  },
+  inputNew(template, from) {
+    const i = settings.get('input');
+    const base = from ? i.profiles.find((x) => x.id === from) : null;
+    const p = base ? { ...structuredClone(base), name: `${base.name} copy`.slice(0, 40) } : (T.TEMPLATES[template] || T.TEMPLATES.standard)();
+    p.id = Date.now().toString(36);
+    saveInput({ profiles: [...i.profiles, T.complete(p)], profile: p.id });
+    if (input.running) input.configure(inputProfile());
+    return snapshot();
+  },
+  inputRename(id, name) {
+    const clean = String(name || '').trim().slice(0, 40);
+    if (!clean) throw new Error('Give the profile a name.');
+    saveInput({ profiles: settings.get('input').profiles.map((x) => (x.id === id ? { ...x, name: clean } : x)) });
+    return snapshot();
+  },
+  inputDelete(id) {
+    const i = settings.get('input');
+    if (i.profiles.length < 2) throw new Error('Keep at least one profile.');
+    const profiles = i.profiles.filter((x) => x.id !== id);
+    saveInput({ profiles, profile: i.profile === id ? profiles[0].id : i.profile });
+    if (input.running) input.configure(inputProfile());
+    return snapshot();
+  },
+  inputExport(id) {
+    const p = settings.get('input').profiles.find((x) => x.id === id);
+    const { id: _drop, ...rest } = p;
+    return Buffer.from(JSON.stringify({ openwInput: 1, profile: rest })).toString('base64');
+  },
+  inputImport(code) {
+    let data;
+    try { data = JSON.parse(Buffer.from(String(code).trim(), 'base64').toString('utf8')); } catch { data = null; }
+    if (!data || data.openwInput !== 1 || !data.profile) throw new Error('Not an OpenW Input profile code.');
+    const p = T.complete({ ...data.profile, id: Date.now().toString(36) });
+    saveInput({ profiles: [...settings.get('input').profiles, p], profile: p.id });
+    if (input.running) input.configure(inputProfile());
+    return snapshot();
+  },
+  hidState: () => inputLib.hidState(),
+  // hide the real controller from games (Windows asks for permission)
+  async hidHide(paths) {
+    const list = (Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string' && p);
+    if (!list.length) throw new Error('Pick a controller to hide.');
+    await inputLib.hide(list);
+    saveInput({ hidden: [...new Set([...settings.get('input').hidden, ...list])] });
+    return snapshot();
+  },
+  async hidShow(paths) {
+    const list = Array.isArray(paths) && paths.length ? paths : settings.get('input').hidden;
+    if (list.length) await inputLib.show(list);
+    const gone = new Set(list.map((p) => p.toLowerCase()));
+    saveInput({ hidden: settings.get('input').hidden.filter((p) => !gone.has(p.toLowerCase())) });
+    return snapshot();
+  },
+  openDriverPage(which) {
+    const URLS = { vigem: 'https://github.com/nefarius/ViGEmBus/releases/latest', hidhide: 'https://github.com/nefarius/HidHide/releases/latest' };
+    if (URLS[which]) shell.openExternal(URLS[which]);
+  },
 
   async importKeys() {
     const [file] = await pick({ title: 'Choose a key list (keys.txt)', properties: ['openFile'], filters: [{ name: 'Key list', extensions: ['txt'] }] });
@@ -503,7 +584,7 @@ async function poll() {
 }
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'thumb', privileges: { standard: true, secure: true } }]);
-app.setAppUserModelId('io.github.boostpad'); // own taskbar identity and icon on Windows
+app.setAppUserModelId('io.github.openw'); // own taskbar identity and icon on Windows
 
 app.whenReady().then(async () => {
   const data = app.getPath('userData');
@@ -517,6 +598,12 @@ app.whenReady().then(async () => {
   });
   loadKeys();
   maps = new Maps(path.join(data, 'maps'));
+  delete settings.data.steamInput; // the old Steam Input route is gone
+  input.on('status', (st) => send('input-status', st));
+  input.on('state', (st) => send('input-state', st));
+  if (settings.get('input').on && !smokeShot) {
+    try { input.start(inputProfile()); } catch (e) { console.error(e.message); }
+  }
   // settings from an older version: bring the overlay options into the current shape
   const saved = settings.get('overlay');
   if (!saved.pad || !saved.music) {
@@ -546,7 +633,7 @@ app.whenReady().then(async () => {
 
   win = new BrowserWindow({
     width: 1320, height: 840, minWidth: 1000, minHeight: 660, backgroundColor: chrome().bg, show: !smokeShot,
-    autoHideMenuBar: true, title: 'Boostpad', icon: ICON,
+    autoHideMenuBar: true, title: 'OpenW', icon: ICON,
     // custom title bar: the page draws the bar, Windows draws only the three buttons
     titleBarStyle: 'hidden', titleBarOverlay: titleBar(),
     // test runs render offscreen, which keeps animations running so the screenshot is truthful
@@ -580,4 +667,4 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => { if (mediaWatcher) mediaWatcher.stop(); });
+app.on('will-quit', () => { if (mediaWatcher) mediaWatcher.stop(); input.stop(); });

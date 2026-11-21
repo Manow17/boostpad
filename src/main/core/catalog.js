@@ -70,10 +70,10 @@ function buildCatalog(cookedDir) {
   return { categories: CATEGORIES, items, fileCount: files.length };
 }
 
-// Marks each item `ok` when its package can be read with the keys Boostpad has
+// Marks each item `ok` when its package can be read with the keys OpenW has
 // (only those can be used as a new look, and only those have a readable picture).
 // `cache` maps file name -> { size, ok } and is updated in place; pass `skip` for
-// files Boostpad has replaced, so the answer stays the one for the original file.
+// files OpenW has replaced, so the answer stays the one for the original file.
 function annotate(cookedDir, items, cache = {}, skip = new Set(), extraKeys = []) {
   for (const item of items) {
     const known = cache[item.id];

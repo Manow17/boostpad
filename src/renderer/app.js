@@ -1,6 +1,6 @@
-/* Boostpad renderer. No framework: a small element helper, a few custom controls,
+/* OpenW renderer. No framework: a small element helper, a few custom controls,
    and one function per page that returns a bento grid of tiles. */
-const api = (method, ...args) => window.boostpad.call(method, ...args);
+const api = (method, ...args) => window.openw.call(method, ...args);
 
 let S = null;          // latest snapshot from the main process
 let catalog = null;    // item catalog, loaded on first use
@@ -10,10 +10,10 @@ const PAGES = {
   garage: ['Garage', 'Give an item you own the look of another. Only you see it.'],
   maps: ['Workshop Maps', 'Training and challenge maps, on Steam or Epic.'],
   lab: ['Map Merge', 'Mix the game’s own arenas, and add snow.'],
-  controller: ['Controller', 'Steam Input for the Epic version: square dead zone and Steam’s stick settings.'],
+  controller: ['Controller', 'OpenW Input: Steam-style stick, trigger and button settings for any controller.'],
   presets: ['Presets', 'Save your whole setup and switch in one click.'],
   overlay: ['Overlay', 'Your music and your controller, over the game.'],
-  profile: ['Profile', 'Your Boostpad card.'],
+  profile: ['Profile', 'Your OpenW card.'],
   settings: ['Settings', ''],
 };
 const NAV = [
@@ -239,13 +239,13 @@ function render(animate) {
   if (shown !== page) view.scrollTop = 0;
   shown = page;
 
-  const [name, sub] = ready ? PAGES[ui.tab] : ['Boostpad', ''];
+  const [name, sub] = ready ? PAGES[ui.tab] : ['OpenW', ''];
   const dark = themeMode() === 'dark';
   top.replaceChildren(...[
     h('div', { class: 'pagetitle grow' }, h('h1', {}, name), sub && h('span', { class: 'muted clip' }, sub)),
     ready && S.running && h('span', { class: 'pill' }, h('span', { class: 'dot live' }), 'Game running · changes are queued'),
     h('button', { class: 'iconbtn', 'aria-label': dark ? 'Switch to light mode' : 'Switch to dark mode', onclick: () => setTheme(themeMode() === 'dark' ? 'light' : 'dark') }, icon(dark ? 'sun' : 'moon', 18)),
-    ready && btnIcon('primary', 'play', 'Play', () => run(() => api('launchGame'), (r) => (r && r.via === 'steam' ? 'Starting Rocket League through Steam…' : 'Starting Rocket League…')), { disabled: S.running }),
+    ready && btnIcon('primary', 'play', 'Play', () => run(() => api('launchGame'), 'Starting Rocket League…'), { disabled: S.running }),
   ].filter(Boolean));
   if (!ready) { view.replaceChildren(setup()); return; }
   updateNav(nav);
@@ -262,7 +262,7 @@ function updateNav(nav) {
         list.append(h('button', { 'data-tab': id, onclick: go(id) }, icon(glyph), h('span', { class: 'grow' }, PAGES[id][0]), id === 'garage' && h('span', { class: 'count', hidden: '' })));
       }
     });
-    nav.append(h('div', { class: 'brand' }, mark(32), 'BOOSTPAD'), list,
+    nav.append(h('div', { class: 'brand' }, mark(32), 'OPENW'), list,
       h('div', { class: 'gamestate' }, h('div', { class: 'row', style: 'gap:8px' }, h('span', { class: 'dot' }), h('b', {}, 'Rocket League')), h('span', { class: 'muted small' }), h('span', { class: 'muted small' }, `v${S.version} · open source`)));
   }
   const ind = nav.querySelector('.ind');
@@ -291,9 +291,9 @@ function setup() {
     else { toast(`No ${label} install found. Select the "rocketleague" folder.`, true); run(() => api('browseInstall', platform)); }
   } }, h('h3', {}, 'Launcher'), h('h2', {}, label), h('span', { class: 'muted small' }, 'Detect automatically'));
   return h('div', { class: 'setupwrap' }, bento(
-    tile('s12 hero ink', mark(72), h('h1', {}, 'Where do you play?'), h('p', { class: 'muted' }, 'Pick your launcher and Boostpad finds Rocket League for you.')),
+    tile('s12 hero ink', mark(72), h('h1', {}, 'Where do you play?'), h('p', { class: 'muted' }, 'Pick your launcher and OpenW finds Rocket League for you.')),
     choose('steam', 'Steam'), choose('epic', 'Epic Games'),
-    noteTile('info', 's12', 'Boostpad only changes files on your own PC and backs up every file it touches. It is a fan project, not affiliated with Psyonix or Epic Games.')));
+    noteTile('info', 's12', 'OpenW only changes files on your own PC and backs up every file it touches. It is a fan project, not affiliated with Psyonix or Epic Games.')));
 }
 
 /* ---------- garage: item swaps ---------- */
@@ -316,7 +316,7 @@ async function ensureCatalog() {
 // Items whose package cannot be read fall back to their category icon.
 function picture(item, glyph, cls = '') {
   const box = h('span', { class: `pic ${cls}` });
-  // a lock means the package needs a key Boostpad does not have (see Settings)
+  // a lock means the package needs a key OpenW does not have (see Settings)
   const fallback = () => { box.classList.add('none'); box.replaceChildren(icon(item && item.ok === false ? 'lock' : glyphFor(glyph), cls.includes('sm') ? 18 : 26)); };
   if (!item || !item.thumb) { fallback(); return box; }
   const img = h('img', { alt: '', loading: 'lazy', decoding: 'async', draggable: 'false', src: `thumb://item/${encodeURIComponent(item.thumb)}?k=${S.keys}` });
@@ -330,7 +330,7 @@ function picture(item, glyph, cls = '') {
 // Can the item you own take this look? Mirrors canSwap() in core/catalog.js.
 const canSwap = (source, target) => source.id !== target.id && target.ok && source.len <= target.len;
 const whyNot = (source, target) => {
-  if (!target.ok) return 'This look uses a newer package key that Boostpad cannot read.';
+  if (!target.ok) return 'This look uses a newer package key that OpenW cannot read.';
   if (source.len > target.len) return 'Not supported yet: this look has a shorter internal name than your item.';
   return 'Pick two different items.';
 };
@@ -445,7 +445,7 @@ views.garage = () => {
   paintBar();
   fill();
 
-  // Everything Boostpad has put in the game, or will when it closes, with a way back.
+  // Everything OpenW has put in the game, or will when it closes, with a way back.
   const changes = [...S.engine.queue.filter((q) => !q.op || q.op.kind === 'swap').map((q) => ({ q, op: q.op })), ...S.engine.active.filter((r) => r.op.kind === 'swap').map((r) => ({ r, op: r.op }))];
   const applied = changes.length ? tile('s12 applied', h('h3', {}, 'In your game'),
     changes.map(({ q, r, op }) => {
@@ -641,7 +641,7 @@ function mergeHow(plan, donor, base) {
   const how = {
     stadium: `Both arenas keep their stadium in a separate file, so ${donor.name}’s stadium is put straight into ${base.name}.`,
     surroundings: `${donor.name} keeps its stadium and gets ${base.name}’s surroundings around it${files}. Anything built into ${donor.name}’s own file, like a skyline, stays as well.`,
-    build: `Boostpad takes both maps apart piece by piece: only ${donor.name}’s stadium (pitch, walls, stands, crowd) is kept, and only ${base.name}’s outside, sky and fog around it${files}. Each arena’s stadium is measured from where its stands are.`,
+    build: `OpenW takes both maps apart piece by piece: only ${donor.name}’s stadium (pitch, walls, stands, crowd) is kept, and only ${base.name}’s outside, sky and fog around it${files}. Each arena’s stadium is measured from where its stands are.`,
     whole: `${[donor, base].find((a) => !a.field) === donor ? donor.name : base.name} has its stadium built into its main file, so these two cannot be taken apart and put back together. Instead, all of ${donor.name} is played whenever you pick ${base.name}.`,
   }[plan.how];
   return h('div', {},
@@ -652,56 +652,297 @@ function mergeHow(plan, donor, base) {
 
 /* ---------- controller ---------- */
 
-// Steam Input for the Epic version: a Steam shortcut that starts Rocket League, so the stick
-// settings are Steam's own (main/core/steam.js).
-let steamSt = null;
+/* ---------- controller: OpenW Input ---------- */
+
+// The real controller is read by OpenW's helper, run through these settings, and played on a
+// virtual Xbox controller (main/input.js, native/openw-input.cpp). The maths for the previews
+// is the helper's own, in shared/transform.js.
+const TX = window.OpenWTransform;
+const PAD_NAMES = { xinput: 'Xbox controller', ds4: 'DualShock 4', dualsense: 'DualSense', edge: 'DualSense Edge' };
+const CURVE_OPTS = [['linear', 'Linear'], ['aggressive', 'Aggressive'], ['relaxed', 'Relaxed'], ['wide', 'Wide'], ['extrawide', 'Extra Wide'], ['custom', 'Custom']];
+const SIDES = [['left', 'Left'], ['right', 'Right'], ['none', 'None']];
+const SHAPE_TEXT = {
+  circle: 'Round dead zone; the stick keeps its round range.',
+  cross: 'Each axis has its own dead zone, so straight lines stay straight.',
+  square: 'Diagonals reach full on both axes, like a square gate.',
+};
+// [Xbox name, PlayStation name]
+const SRC_LABEL = {
+  A: ['A', 'Cross'], B: ['B', 'Circle'], X: ['X', 'Square'], Y: ['Y', 'Triangle'], LB: ['LB', 'L1'], RB: ['RB', 'R1'],
+  LS: ['Left stick click', 'L3'], RS: ['Right stick click', 'R3'], Back: ['View', 'Share / Create'], Start: ['Menu', 'Options'], Guide: ['Xbox button', 'PS button'],
+  Up: ['D-pad up'], Down: ['D-pad down'], Left: ['D-pad left'], Right: ['D-pad right'],
+  Touchpad: ['Touchpad click'], Mute: ['Mute button'], FnL: ['Left Fn'], FnR: ['Right Fn'], PaddleL: ['Left back paddle'], PaddleR: ['Right back paddle'],
+};
+const OUT_LABEL = { A: 'A', B: 'B', X: 'X', Y: 'Y', LB: 'LB', RB: 'RB', LS: 'Left stick click', RS: 'Right stick click', Back: 'View (Back)', Start: 'Menu (Start)', Guide: 'Xbox button',
+  Up: 'D-pad up', Down: 'D-pad down', Left: 'D-pad left', Right: 'D-pad right', LT: 'Left trigger, full', RT: 'Right trigger, full' };
+const OUT_OPTS = [['', 'Nothing'], ...Object.entries(OUT_LABEL)];
+const HOLD_TIMES = [200, 300, 400, 500, 700, 1000].map((ms) => [ms, `${ms} ms`]);
+const TURBO_RATES = [5, 8, 10, 15, 20, 30].map((hz) => [hz, `${hz} a second`]);
+const LIGHTS = ['#00d8c8', '#2563eb', '#7c3aed', '#db2777', '#dc2626', '#ea580c', '#facc15', '#16a34a', '#ffffff'];
+
+const ctl = { section: 'left', info: null, hid: null, live: null, watching: false, ui: null, fake: {} };
+const ctlLive = () => ui.tab === 'controller' && ctl.ui && ctl.ui.root.isConnected;
+const curProfile = () => { const i = S.settings.input; return i.profiles.find((p) => p.id === i.profile) || i.profiles[0]; };
+const padKind = () => (ctl.info && ctl.info.status.pad ? ctl.info.status.pad.kind : null);
+const srcName = (src) => { const [xb, ps] = SRC_LABEL[src]; const k = padKind(); return !ps ? xb : k === 'xinput' ? xb : k ? ps : `${xb} / ${ps}`; };
+function shownSources() {
+  const k = padKind(), all = TX.SOURCES;
+  if (k === 'xinput') return all.slice(0, 15);
+  if (k === 'ds4') return all.slice(0, 16);
+  return k === 'edge' ? all : all.slice(0, 17);
+}
+async function refreshInput() { ctl.info = await api('inputInfo'); if (ui.tab === 'controller') render(); }
+window.openw.on('input-status', (st) => { if (ctl.info) { ctl.info.status = st; if (ui.tab === 'controller') render(); } });
+window.openw.on('input-state', (st) => { ctl.live = st; if (ctlLive()) ctl.ui.draw(); });
+// stop the live feed when the page is left
+setInterval(() => { if (ctl.watching && !ctlLive()) { ctl.watching = false; api('inputWatch', false); } }, 1000);
+
+// A canvas drawn at the screen's pixel density; ctx() clears it and works in CSS pixels.
+function canvasEl(w, ht) {
+  const dpr = window.devicePixelRatio || 1;
+  const el = h('canvas', { width: Math.round(w * dpr), height: Math.round(ht * dpr), style: `width:${w}px;height:${ht}px` });
+  el.ctx = () => { const c = el.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, ht); return c; };
+  el.w = w; el.h = ht;
+  return el;
+}
+const cssVar = (el, name) => getComputedStyle(el).getPropertyValue(name).trim();
+
+// The stick's square: dead zone, where the output can reach, your stick and what the game gets.
+function drawStick(el, c, raw) {
+  const g = el.ctx(), W = el.w, R = W / 2 - 14, cx = W / 2, cy = W / 2;
+  const line = cssVar(el, '--line-2'), muted = cssVar(el, '--muted'), accent = cssVar(el, '--accent'), soft = cssVar(el, '--accent-soft');
+  g.lineWidth = 1;
+  g.strokeStyle = line; g.strokeRect(cx - R, cy - R, 2 * R, 2 * R);
+  g.setLineDash([3, 4]); g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.stroke();
+  g.beginPath(); g.moveTo(cx - R, cy); g.lineTo(cx + R, cy); g.moveTo(cx, cy - R); g.lineTo(cx, cy + R); g.stroke(); g.setLineDash([]);
+  // where the output can reach: the round range run through the settings
+  g.strokeStyle = accent; g.fillStyle = soft; g.lineWidth = 1.5; g.beginPath();
+  for (let i = 0; i <= 144; i++) {
+    const a = (i / 144) * Math.PI * 2, [x, y] = TX.stick(Math.cos(a), Math.sin(a), c);
+    if (i) g.lineTo(cx + x * R, cy - y * R); else g.moveTo(cx + x * R, cy - y * R);
+  }
+  g.fill(); g.stroke();
+  // dead zone
+  g.fillStyle = 'rgba(251,113,133,.22)';
+  if (c.shape === 1) { const d = c.inner * R; g.fillRect(cx - d, cy - R, 2 * d, 2 * R); g.fillRect(cx - R, cy - d, 2 * R, 2 * d); }
+  else { g.beginPath(); g.arc(cx, cy, c.inner * R, 0, Math.PI * 2); g.fill(); }
+  if (!raw) return;
+  const [ox, oy] = TX.stick(raw[0], raw[1], c);
+  g.strokeStyle = muted; g.lineWidth = 1; g.beginPath(); g.moveTo(cx + raw[0] * R, cy - raw[1] * R); g.lineTo(cx + ox * R, cy - oy * R); g.stroke();
+  g.fillStyle = muted; g.beginPath(); g.arc(cx + raw[0] * R, cy - raw[1] * R, 6, 0, Math.PI * 2); g.fill();
+  g.fillStyle = accent; g.beginPath(); g.arc(cx + ox * R, cy - oy * R, 7, 0, Math.PI * 2); g.fill();
+}
+
+// Input travel -> output, with the current travel marked.
+function drawCurve(el, fn, at) {
+  const g = el.ctx(), pad = 14, W = el.w - pad * 2, H = el.h - pad * 2;
+  const line = cssVar(el, '--line-2'), accent = cssVar(el, '--accent'), muted = cssVar(el, '--muted');
+  g.strokeStyle = line; g.lineWidth = 1; g.strokeRect(pad, pad, W, H);
+  g.setLineDash([3, 4]); g.beginPath(); g.moveTo(pad, pad + H); g.lineTo(pad + W, pad); g.stroke(); g.setLineDash([]);
+  g.strokeStyle = accent; g.lineWidth = 2; g.beginPath();
+  for (let i = 0; i <= 120; i++) { const x = i / 120, y = fn(x); if (i) g.lineTo(pad + x * W, pad + H - y * H); else g.moveTo(pad + x * W, pad + H - y * H); }
+  g.stroke();
+  g.fillStyle = muted; g.font = '11px "DM Sans", sans-serif';
+  g.fillText('in', pad + W - 14, pad + H - 5); g.fillText('out', pad + 5, pad + 13);
+  if (at == null) return;
+  const x = Math.min(1, at), y = fn(x);
+  g.strokeStyle = muted; g.lineWidth = 1; g.beginPath(); g.moveTo(pad + x * W, pad); g.lineTo(pad + x * W, pad + H); g.stroke();
+  g.fillStyle = accent; g.beginPath(); g.arc(pad + x * W, pad + H - y * H, 5, 0, Math.PI * 2); g.fill();
+}
+
 views.controller = () => {
   const root = bento();
-  if (!steamSt) {
-    api('steamState').then((s) => { steamSt = s; if (ui.tab === 'controller') render(true); }).catch(() => { steamSt = { steam: false }; render(true); });
-    root.append(tile('s12', empty('stick', 'Looking for Steam', 'Steam Input comes from Steam itself.')));
+  if (!ctl.info) {
+    refreshInput().catch((e) => toast(String(e.message || e), true));
+    root.append(tile('s12', empty('stick', 'Looking for your controller', 'Checking the drivers OpenW Input uses.')));
     return root;
   }
-  const s = steamSt;
-  // the toast only shows when it worked; run() shows the error otherwise
-  const refresh = (call, msg) => run(async () => { steamSt = await call(); return null; }, msg);
-  if (S.install.platform && S.install.platform !== 'epic') {
-    root.append(noteTile('info', 's12', h('b', {}, 'You play the Steam version'), h('p', {}, 'Steam Input is already there: in Steam, right-click Rocket League → Properties → Controller, then follow step 2 below.')));
+  const { status: st, drivers: dr } = ctl.info;
+  const inp = S.settings.input, p = curProfile();
+  if (st.running && !ctl.watching) { ctl.watching = true; api('inputWatch', true); }
+  const drawers = [];
+  ctl.ui = { root, draw: () => drawers.forEach((d) => d(ctl.live)) };
+
+  // edits are saved and sent on; while a slider moves they are only sent
+  const save = () => api('inputSave', p).catch((e) => toast(String(e.message || e), true));
+  const preview = () => { api('inputPreview', p); ctl.ui.draw(); };
+  const redo = () => { save(); render(); };
+  const lbl = (title, sub, grow) => h('div', { class: `lbl${grow ? ' grow' : ''}` }, h('b', {}, title), sub && h('div', { class: 'muted small' }, sub));
+  const valRow = (title, sub, obj, key, min, max, fmt = (v) => `${v}%`, step = 1) => {
+    const val = h('span', { class: 'val' }, fmt(obj[key]));
+    return h('div', { class: 'opt-row' }, lbl(title, sub),
+      slider(min, max, obj[key], (v) => { obj[key] = v; save(); }, (v) => { obj[key] = v; val.textContent = fmt(v); preview(); }, step), val);
+  };
+  const choiceRow = (title, sub, control) => h('div', { class: 'opt-row' }, lbl(title, sub, true), control);
+  const flip = (obj, key) => toggle(obj[key], (v) => { obj[key] = v; save(); preview(); });
+
+  // --- on / off ---
+  const padText = st.pad ? `${PAD_NAMES[st.pad.kind] || 'Controller'} over ${st.pad.conn === 'bt' ? 'Bluetooth' : 'USB'}.` : 'No controller found yet. Plug one in or connect it over Bluetooth.';
+  const vText = st.vigem === false ? 'No virtual controller: ViGEmBus is not installed.' : st.vigem ? 'Virtual Xbox controller is on.' : 'Starting…';
+  root.append(tile(`s12 bar${st.running ? ' ink' : ''}`, art('OpenW Input', 'stick'),
+    h('div', { class: 'grow' }, h('b', {}, 'OpenW Input'), h('div', { class: 'muted small' }, st.running ? `${padText} ${vText}` : st.error || 'Off. Turn it on to play with these settings.')),
+    toggle(st.running, (v) => run(async () => { const r = await api(v ? 'inputStart' : 'inputStop'); ctl.info = await api('inputInfo'); return r; }, v ? 'OpenW Input is on.' : 'OpenW Input is off.'))));
+
+  if (!dr.vigem || !dr.hidhide || !dr.helper) {
+    const drv = (ok, title, text, which) => h('div', { class: 'opt-row' }, h('span', { class: `tag${ok ? ' on' : ' bad'}` }, ok ? 'Installed' : 'Missing'),
+      lbl(title, text, true), !ok && h('button', { class: 'btn sm', onclick: () => api('openDriverPage', which) }, 'Download page'));
+    root.append(tile('s12 ctl', head('Drivers', h('button', { class: 'btn sm', onclick: () => run(async () => { ctl.hid = null; await refreshInput(); }) }, 'Check again')),
+      h('p', { class: 'muted' }, 'OpenW Input uses two free drivers by Nefarius Software Solutions, the same ones DS4Windows uses. Download them from their GitHub pages, install them, then press Check again.'),
+      drv(dr.vigem, 'ViGEmBus', 'Makes the virtual Xbox controller the game plays with. Needed.', 'vigem'),
+      drv(dr.hidhide, 'HidHide', 'Hides your real controller from the game, so it does not get every press twice. Strongly recommended.', 'hidhide'),
+      !dr.helper && h('p', { class: 'small' }, 'The input helper (bin/openw-input.exe) is missing from this copy of OpenW. Build it with npm run build-input.')));
   }
-  if (!s.steam) {
-    root.append(noteTile('warn', 's12', h('b', {}, 'Steam is not installed'), h('p', {}, 'Steam Input is part of Steam. Install Steam (free) and sign in once, then open this page again.')));
-    return root;
+  if (inp.hidden.length && !st.running) {
+    root.append(noteTile('warn', 's12', h('b', {}, 'Your controller is hidden from games'), h('p', {}, 'Only OpenW Input can see it, and OpenW Input is off. Turn it on to play, or show the controller again.'),
+      h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: () => run(async () => { const r = await api('hidShow'); ctl.hid = null; return r; }, 'Your controller is visible again.') }, 'Show it again'))));
+  } else if (st.running && st.vigem && !inp.hidden.length) {
+    root.append(noteTile('info', 's12', 'Games also see your real controller, so they can get every press twice. Hide it under Hide real controller.'));
   }
-  const step = (n, title, done, ...body) => tile('s12', head(`${n}. ${title}`, done && h('span', { class: 'tag on' }, 'Done')), body);
-  const li = (...kids) => h('li', {}, kids);
-  root.append(
-    noteTile('info', 's12', h('b', {}, 'Why through Steam'), h('p', {}, 'Rocket League on Epic has no dead zone shape setting. Steam Input does: started through Steam, the game gets Steam’s own stick settings, exactly as on the Steam version. Boostpad adds Rocket League to Steam as a shortcut that starts the Epic Games Launcher with Rocket League, which is how Steam Input reaches Epic games.')),
-    step(1, 'Add Rocket League to Steam', s.added,
-      h('p', { class: 'muted' }, s.added ? `“Rocket League (Steam Input)” is in your Steam library.` : 'Adds “Rocket League (Steam Input)” to your Steam library. Your other shortcuts stay as they are, and a copy of the file is kept.'),
-      s.running && h('p', { class: 'muted small' }, 'Steam keeps its shortcut list open while it runs, so Boostpad closes Steam, makes the change and opens Steam again.'),
-      !s.launcher && h('p', { class: 'small' }, 'The Epic Games Launcher was not found.'),
-      h('div', { class: 'row' },
-        h('button', { class: 'btn primary', disabled: !s.launcher, onclick: () => refresh(() => api('steamShortcut', true), s.added ? 'Shortcut updated.' : 'Added to Steam.') }, s.added ? 'Add again' : (s.running ? 'Close Steam and add' : 'Add to Steam')),
-        s.added && h('button', { class: 'btn', onclick: () => refresh(() => api('steamShortcut', false), 'Removed from Steam.') }, 'Remove'))),
-    step(2, 'Turn on Steam Input and pick the square dead zone', false,
-      h('ol', { class: 'steps' },
-        li('In your Steam library, right-click ', h('b', {}, 'Rocket League (Steam Input)'), ' → ', h('b', {}, 'Properties'), ' → ', h('b', {}, 'Controller'), ', and set it to ', h('b', {}, 'Enable Steam Input'), '.'),
-        li('Open the controller layout (Steam: ', h('b', {}, 'Controller settings'), ' on the game’s page), then ', h('b', {}, 'Left Joystick'), ' → the gear next to it.'),
-        li('Set the ', h('b', {}, 'dead zone shape'), ' to ', h('b', {}, 'Square'), ' (Steam also has Cross and Circle). Square reaches full input in the corners, so diagonals go all the way.'),
-        li('Set the inner and outer dead zone to taste. Players often put ', h('b', {}, 'Output Anti-Deadzone'), ' on its first notch, because without it Steam adds a little dead zone of its own.'),
-        li('In Rocket League, ', h('b', {}, 'Settings → Controls'), ': lower the game’s own Controller Deadzone, since Steam handles it now.')),
-      s.added && s.appid && h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => api('steamControllerSettings', s.appid) }, 'Open Steam’s controller settings')),
-      h('p', { class: 'muted small' }, 'These are Steam’s own settings, so they feel exactly like Steam Input; Boostpad does not change your controller input itself.')),
-    step(3, 'Play through Steam', S.settings.steamInput && s.added,
-      h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, 'Play button starts Rocket League through Steam'),
-        h('div', { class: 'muted small' }, 'Or start “Rocket League (Steam Input)” from Steam yourself.')),
-      toggle(S.settings.steamInput, (v) => set('steamInput', v))),
-      h('p', { class: 'muted small' }, 'The Epic Games Launcher has to be closed when you start: if it is already open, it starts the game itself and Steam never sees it.'),
-      s.epicOpen && h('div', { class: 'row' }, h('span', { class: 'small grow' }, 'The Epic Games Launcher is open right now.'),
-        h('button', { class: 'btn', onclick: () => { if (window.confirm('Close the Epic Games Launcher? Downloads in it stop until it opens again.')) refresh(() => api('closeEpicLauncher'), 'Epic Games Launcher closed.'); } }, 'Close it'))),
-  );
+
+  // --- profiles ---
+  // a pasted profile code is added on Enter
+  const code = field({ placeholder: 'Paste a profile code', style: 'width:170px', onkeydown: (e) => { if (e.key === 'Enter' && code.value.trim()) run(() => api('inputImport', code.value), 'Profile added.'); } });
+  root.append(tile('s12 bar', h('b', {}, 'Profile'),
+    select(inp.profiles.map((x) => [x.id, x.name]), inp.profile, (v) => run(() => api('inputSelect', v)), 190),
+    field({ value: p.name, maxlength: 40, style: 'width:150px', 'aria-label': 'Profile name', onchange: (e) => run(() => api('inputRename', p.id, e.target.value), 'Renamed.') }),
+    select([['', 'New profile…'], ['standard', 'Standard'], ['square', 'Square dead zone'], ['precise', 'Precise']], '', (v) => v && run(() => api('inputNew', v), 'Profile added.'), 150),
+    h('button', { class: 'btn sm', onclick: () => run(() => api('inputNew', '', p.id), 'Copy made.') }, 'Duplicate'),
+    h('button', { class: 'btn sm', onclick: async () => { await navigator.clipboard.writeText(await api('inputExport', p.id)); toast('Profile code copied.'); } }, 'Copy code'),
+    h('span', { class: 'grow' }), code,
+    h('button', { class: 'btn sm danger', disabled: inp.profiles.length < 2, onclick: () => { if (window.confirm(`Delete the profile “${p.name}”?`)) run(() => api('inputDelete', p.id), 'Profile deleted.'); } }, 'Delete')));
+
+  root.append(h('div', { class: 's12 secbar' }, seg([['left', 'Left stick'], ['right', 'Right stick'], ['triggers', 'Triggers'], ['buttons', 'Buttons'], ['feedback', 'Rumble and light'], ['hide', 'Hide real controller']],
+    ctl.section, (v) => { ctl.section = v; render(); })));
+
+  const tag = (off = 'Turn on to see it live') => h('span', { class: `tag${st.running ? ' on' : ''}` }, st.running ? 'Live' : off);
+  const sec = ctl.section;
+  if (sec === 'left' || sec === 'right') {
+    const s = p.sticks[sec], i = sec === 'left' ? 0 : 1;
+    const map = canvasEl(260, 260), curve = canvasEl(260, 140), read = h('div', { class: 'muted small mono' });
+    map.classList.add('stickmap');
+    const rawOf = (live) => (st.running && live ? [live.raw[i * 2], live.raw[i * 2 + 1]] : ctl.fake[sec] || null);
+    drawers.push((live) => {
+      const c = TX.stickCfg(s), raw = rawOf(live);
+      drawStick(map, c, raw);
+      const m = raw ? (c.shape === 1 ? Math.max(Math.abs(raw[0]), Math.abs(raw[1])) : Math.hypot(raw[0], raw[1])) : null;
+      drawCurve(curve, (x) => TX.shapeMag(x, c), m);
+      if (raw) { const [ox, oy] = TX.stick(raw[0], raw[1], c); read.textContent = `stick ${raw[0].toFixed(2)}, ${raw[1].toFixed(2)}  →  game ${ox.toFixed(2)}, ${oy.toFixed(2)}`; } else read.textContent = ' ';
+    });
+    // with OpenW Input off, drag in the square to see what the settings do
+    const drag = (e) => {
+      if (st.running || !(e.buttons & 1)) return;
+      const r = map.getBoundingClientRect(), R = r.width / 2 - 14;
+      let x = (e.clientX - r.left - r.width / 2) / R, y = -(e.clientY - r.top - r.height / 2) / R;
+      const len = Math.hypot(x, y); if (len > 1) { x /= len; y /= len; }
+      ctl.fake[sec] = [x, y]; ctl.ui.draw();
+    };
+    map.addEventListener('pointerdown', (e) => { map.setPointerCapture(e.pointerId); drag(e); });
+    map.addEventListener('pointermove', drag);
+    map.addEventListener('pointerup', () => { ctl.fake[sec] = null; ctl.ui.draw(); });
+    root.append(
+      tile('s5 ctl', head(`${sec === 'left' ? 'Left' : 'Right'} stick`, tag('Drag to try')), map,
+        h('div', { class: 'legend' }, h('span', {}, h('i', { class: 'dot muted' }), 'Your stick'), h('span', {}, h('i', { class: 'dot accent' }), 'What the game gets'), h('span', {}, h('i', { class: 'dot dead' }), 'Dead zone')),
+        curve, read,
+        h('p', { class: 'muted small' }, 'In Rocket League, turn the game’s own Controller Deadzone down (Settings, Controls), since OpenW Input handles the dead zone now.')),
+      tile('s7 ctl', head('Settings', h('button', { class: 'btn sm', onclick: () => { p.sticks[sec] = TX.blank('').sticks[sec]; redo(); } }, 'Reset')),
+        choiceRow('Dead zone shape', SHAPE_TEXT[s.shape], seg([['circle', 'Circle'], ['cross', 'Cross'], ['square', 'Square']], s.shape, (v) => { s.shape = v; redo(); })),
+        valRow('Inner dead zone', 'Travel from the centre that does nothing.', s, 'inner', 0, 50),
+        valRow('Outer dead zone', 'Travel at the edge that already counts as full.', s, 'outer', 0, 30),
+        choiceRow('Response curve', 'How output grows with travel.', select(CURVE_OPTS, s.curve, (v) => { s.curve = v; redo(); }, 160)),
+        s.curve === 'custom' && valRow('Curve exponent', 'Under 1 is quicker off the centre, over 1 is finer near it.', s, 'exponent', 0.2, 5, (v) => Number(v).toFixed(2), 0.05),
+        valRow('Output anti-deadzone', 'Where the output starts, to step over the game’s own dead zone.', s, 'anti', 0, 50),
+        valRow('Anti-deadzone buffer', 'Eases into the anti-deadzone, so tiny moves stay tiny.', s, 'buffer', 0, 50),
+        valRow('Horizontal sensitivity', '', s, 'scaleX', 50, 200),
+        valRow('Vertical sensitivity', '', s, 'scaleY', 50, 200),
+        choiceRow('Invert horizontal', '', flip(s, 'invertX')),
+        choiceRow('Invert vertical', '', flip(s, 'invertY')),
+        choiceRow('Output joystick', 'Which stick of the virtual controller it moves.', seg(SIDES, s.output, (v) => { s.output = v; redo(); })),
+        choiceRow('Output axis', '', seg([['both', 'Both'], ['x', 'Horizontal'], ['y', 'Vertical']], s.axes, (v) => { s.axes = v; redo(); })),
+        choiceRow('Outer ring button', 'Held while the stick is pushed past the ring.', select(OUT_OPTS, s.ring.to, (v) => { s.ring.to = v; redo(); }, 160)),
+        s.ring.to && valRow('Outer ring', '', s.ring, 'at', 50, 100),
+        s.ring.to && choiceRow('Invert outer ring', 'Held inside the ring instead.', flip(s.ring, 'invert')),
+        valRow('Smoothing', 'Steadies a shaky stick but adds a little delay; off is fastest.', s, 'smoothing', 0, 100, (v) => (v ? `${v}%` : 'Off'))));
+  } else if (sec === 'triggers') {
+    for (const [side, name, i] of [['left', 'Left', 4], ['right', 'Right', 5]]) {
+      const t = p.triggers[side], curve = canvasEl(260, 130), rawBar = h('i'), outBar = h('i');
+      drawers.push((live) => {
+        const c = TX.trigCfg(t), raw = st.running && live ? live.raw[i] : null;
+        drawCurve(curve, (x) => TX.trigger(x, c), raw);
+        rawBar.style.width = `${(raw || 0) * 100}%`;
+        outBar.style.width = `${(st.running && live ? live.out[i] : 0) * 100}%`;
+      });
+      root.append(tile('s6 ctl', head(`${name} trigger`, tag()), curve,
+        h('div', { class: 'opt-row' }, lbl('Your trigger'), h('div', { class: 'meter raw grow' }, rawBar)),
+        h('div', { class: 'opt-row' }, lbl('Game gets'), h('div', { class: 'meter grow' }, outBar)),
+        valRow('Range start', 'Pull before anything happens.', t, 'start', 0, 90),
+        valRow('Range end', 'Pull that already counts as full.', t, 'end', 10, 100),
+        choiceRow('Response curve', '', select(CURVE_OPTS, t.curve, (v) => { t.curve = v; redo(); }, 150)),
+        t.curve === 'custom' && valRow('Curve exponent', '', t, 'exponent', 0.2, 5, (v) => Number(v).toFixed(2), 0.05),
+        choiceRow('Hair trigger', 'Full the moment it moves down, off the moment it moves back up.', flip(t, 'hair')),
+        choiceRow('Output trigger', '', seg(SIDES, t.output, (v) => { t.output = v; redo(); }))));
+    }
+  } else if (sec === 'buttons') {
+    const lights = [];
+    drawers.push((live) => {
+      const bits = st.running && live ? live.rawButtons : 0;
+      for (const [el, bit] of lights) el.classList.toggle('on', !!(bits & (1 << bit)));
+    });
+    const rows = shownSources().map((src) => {
+      const b = p.buttons[src], lit = h('i', { class: 'lit' });
+      lights.push([lit, TX.SOURCES.indexOf(src)]);
+      return [
+        h('div', { class: 'bname' }, lit, srcName(src)),
+        select(OUT_OPTS, b.to, (v) => { b.to = v; redo(); }, 160),
+        select([['', 'No long press'], ...OUT_OPTS.slice(1)], b.hold, (v) => { b.hold = v; redo(); }, 160),
+        b.hold ? select(HOLD_TIMES, b.holdMs, (v) => { b.holdMs = v; redo(); }, 100) : h('span', { class: 'muted small' }, ' '),
+        h('div', { class: 'row' }, toggle(b.turbo, (v) => { b.turbo = v; redo(); }), b.turbo && select(TURBO_RATES, b.rate, (v) => { b.rate = v; redo(); }, 130)),
+        toggle(b.toggle, (v) => { b.toggle = v; save(); }),
+      ];
+    });
+    root.append(tile('s12 ctl', head('Buttons', h('button', { class: 'btn sm', onclick: () => { p.buttons = TX.blank('').buttons; redo(); } }, 'Reset')),
+      h('p', { class: 'muted' }, 'What each button of your controller presses on the virtual Xbox controller. A long press sends a second button once it is held long enough (a short press then sends the first on release). Turbo repeats while held; toggle keeps it held until the next press.'),
+      h('div', { class: 'btable' }, ['Button', 'Sends', 'Long press', 'Hold for', 'Turbo', 'Toggle'].map((x) => h('div', { class: 'th' }, x)), rows)));
+  } else if (sec === 'feedback') {
+    const ps = padKind() && padKind() !== 'xinput';
+    root.append(
+      tile('s6 ctl', head('Rumble'), h('p', { class: 'muted' }, 'Rumble the game sends to the virtual controller is played on yours.'),
+        valRow('Strength', '0% turns rumble off.', p, 'rumble', 0, 200)),
+      tile('s6 ctl', head('Lightbar', !ps && h('span', { class: 'tag' }, 'PlayStation controllers')),
+        h('p', { class: 'muted' }, 'The colour of a DualShock 4 or DualSense light while OpenW Input runs.'),
+        h('div', { class: 'swatches' },
+          h('button', { class: `btn sm${p.light ? '' : ' primary'}`, onclick: () => { p.light = ''; redo(); } }, 'Leave as it is'),
+          LIGHTS.map((c) => h('button', { class: `swatch${p.light === c ? ' on' : ''}`, style: `background:${c}`, 'aria-label': c, onclick: () => { p.light = c; redo(); } })))));
+  } else {
+    root.append(hideSection(dr, inp));
+  }
+  requestAnimationFrame(() => ctl.ui.draw());
   return root;
 };
+
+// HidHide: hide the real controller from everything except OpenW's helper.
+function hideSection(dr, inp) {
+  if (!dr.hidhide) {
+    return tile('s12', empty('stick', 'HidHide is not installed', 'Without it games see your real controller and the virtual one, and get every press twice. Install HidHide (free), then press Check again under Drivers.',
+      h('button', { class: 'btn primary', onclick: () => api('openDriverPage', 'hidhide') }, 'Download page')));
+  }
+  if (!ctl.hid) {
+    api('hidState').then((s) => { ctl.hid = s; if (ui.tab === 'controller') render(); }).catch((e) => { ctl.hid = { controllers: [], hidden: [], readable: false }; toast(String(e.message || e), true); });
+    return tile('s12', empty('stick', 'Asking HidHide', 'Looking for controllers it can hide.'));
+  }
+  const hs = ctl.hid;
+  const again = (fn, msg) => run(async () => { const r = await fn(); ctl.hid = null; return r; }, msg);
+  const rows = hs.controllers.length ? hs.controllers.map((c) => h('div', { class: 'opt-row' },
+    h('span', { class: `tag${c.hidden ? ' on' : ''}` }, c.hidden ? 'Hidden' : 'Visible'),
+    h('div', { class: 'lbl grow' }, h('b', {}, c.name), h('div', { class: 'muted small' }, [c.vid && `${c.vid}:${c.pid}`, c.virtual && 'may be OpenW’s own virtual controller: leave it visible'].filter(Boolean).join(' · '))),
+    c.hidden ? h('button', { class: 'btn sm', onclick: () => again(() => api('hidShow', c.paths), 'Visible again.') }, 'Show')
+      : h('button', { class: 'btn sm primary', onclick: () => again(() => api('hidHide', c.paths), 'Hidden from games.') }, 'Hide')))
+    : [h('p', { class: 'muted' }, hs.readable === false ? 'HidHide did not answer. Windows may need you to open its configuration once; hiding from here still works.' : 'No controllers found. Plug yours in and press Refresh.')];
+  return tile('s12 ctl', head('Hide real controller', h('button', { class: 'btn sm', onclick: () => { ctl.hid = null; render(); } }, 'Refresh')),
+    h('p', { class: 'muted' }, 'Hidden controllers are only seen by OpenW Input, so Rocket League gets each press once, from the virtual controller. They stay hidden after OpenW closes, until you show them again here. Windows asks for permission each time this changes.'),
+    rows,
+    inp.hidden.length > 0 && h('div', { class: 'row push' }, h('span', { class: 'muted small grow' }, `${plural(inp.hidden.length, 'device')} hidden by OpenW.`),
+      h('button', { class: 'btn sm', onclick: () => again(() => api('hidShow'), 'Everything OpenW hid is visible again.') }, 'Show all again')));
+}
 
 /* ---------- presets ---------- */
 
@@ -801,7 +1042,7 @@ views.overlay = () => {
 };
 
 const overlayLive = () => ui.tab === 'overlay' && overlayUI && overlayUI.root.isConnected;
-window.boostpad.on('media', (state) => { media = state; if (overlayLive()) overlayUI.paint(); });
+window.openw.on('media', (state) => { media = state; if (overlayLive()) overlayUI.paint(); });
 api('mediaState').then((state) => { media = state; if (overlayLive()) overlayUI.paint(); });
 setInterval(() => { if (overlayLive()) overlayUI.tick(); }, 500);
 (function padLoop() {
@@ -828,7 +1069,7 @@ views.profile = () => {
   const p = S.settings.profile, upd = (patch) => set('profile', { ...p, ...patch });
   return bento(
     tile('s5', head('Your card'), profileCard(p),
-      h('p', { class: 'muted small push' }, 'This card lives in Boostpad. It does not change your name, title or rank inside Rocket League: that would need code injected into the running game, which Boostpad does not do.')),
+      h('p', { class: 'muted small push' }, 'This card lives in OpenW. It does not change your name, title or rank inside Rocket League: that would need code injected into the running game, which OpenW does not do.')),
     tile('s7', head('Edit'), h('div', { class: 'fields' },
       h('b', {}, 'Name'), field({ maxlength: 24, value: p.name, onchange: (e) => upd({ name: e.target.value }) }),
       h('b', {}, 'Title'), field({ maxlength: 32, value: p.title, onchange: (e) => upd({ title: e.target.value }) }),
@@ -854,7 +1095,7 @@ views.settings = () => {
       h('div', { class: 'opt-row push' }, h('div', { class: 'grow' }, h('b', {}, 'Launcher'), h('div', { class: 'muted small' }, 'Used by the Play button.')),
         select([['epic', 'Epic Games'], ['steam', 'Steam']], S.install.platform, (v) => set('platform', v)))),
     tile('s7', head('Item pictures and keys', h('span', { class: `tag${S.keys ? ' on' : ''}` }, S.keys ? `${S.keys.toLocaleString()} extra keys loaded` : 'Built-in key only')),
-      h('p', { class: 'muted' }, 'Rocket League encrypts item packages with many different keys. Boostpad includes one, which opens about two thirds of items. Items it cannot open show a lock and cannot be used as a new look. Add a key list (a keys.txt, one key per line) to open the rest.'),
+      h('p', { class: 'muted' }, 'Rocket League encrypts item packages with many different keys. OpenW includes one, which opens about two thirds of items. Items it cannot open show a lock and cannot be used as a new look. Add a key list (a keys.txt, one key per line) to open the rest.'),
       h('div', { class: 'row wrap push' },
         h('button', { class: 'btn primary', onclick: () => run(async () => { const res = await api('importKeys'); catalog = null; arenas = null; return res; }, (r) => (r.keys ? `${r.keys.toLocaleString()} keys loaded. Pictures are being re-read.` : 'No change.')) }, S.keys ? 'Replace key list' : 'Add key list'),
         S.keys ? h('button', { class: 'btn danger', onclick: () => run(async () => { const res = await api('removeKeys'); catalog = null; arenas = null; return res; }, 'Key list removed.') }, 'Remove') : null)),
@@ -862,12 +1103,12 @@ views.settings = () => {
       h('div', { class: 'row wrap push' },
         h('button', { class: 'btn', onclick: () => api('openDataFolder') }, 'Open data folder'),
         h('button', { class: 'btn danger', disabled: !S.engine.active.length, onclick: () => run(() => api('revertAll'), 'Everything reverted.') }, 'Revert every change'))),
-    noteTile('warn', 's12', `Boostpad v${S.version} changes files in your Rocket League folder and backs up each one first. Rocket League runs with Easy Anti-Cheat; Boostpad does not touch or work around it and cannot promise that changed files are accepted online. Changing game files may break the game’s terms of service and could put your account at risk, so use it at your own risk. Your launcher’s “Verify files” always restores a clean install. Free and open source; not affiliated with Psyonix or Epic Games.`));
+    noteTile('warn', 's12', `OpenW v${S.version} changes files in your Rocket League folder and backs up each one first. Rocket League runs with Easy Anti-Cheat; OpenW does not touch or work around it and cannot promise that changed files are accepted online. Changing game files may break the game’s terms of service and could put your account at risk, so use it at your own risk. Your launcher’s “Verify files” always restores a clean install. Free and open source; not affiliated with Psyonix or Epic Games.`));
 };
 
 /* ---------- boot ---------- */
 
-window.boostpad.on('state', ({ state, flushed, notice }) => {
+window.openw.on('state', ({ state, flushed, notice }) => {
   S = state;
   if (notice) toast(notice);
   const ok = flushed.filter((f) => f.ok).length, failed = flushed.filter((f) => !f.ok);

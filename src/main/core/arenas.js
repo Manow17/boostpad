@@ -50,7 +50,7 @@ const NOT_STANDARD = /^(labs_|hoops|shattershot|throwbackhockey|ko_|street_p$|wa
  * cache: { "<file>": { size, parts: [...] } }, updated in place (reading a map header is slow).
  * names: arena file (lower case) -> name the game shows, from the game's own text (labels.js).
  */
-// resolve(file): where to read a game file from; Boostpad's backup for a file it has changed, so a
+// resolve(file): where to read a game file from; OpenW's backup for a file it has changed, so a
 // merged arena is still scanned as the game shipped it.
 function scanArenas(cookedDir, cache = {}, extraKeys = [], names = new Map(), resolve = null) {
   const where = (f) => (resolve ? resolve(f) : path.join(cookedDir, f));
@@ -225,7 +225,7 @@ function mergeInfo(stadium, place, open, mapbuild) {
 }
 
 /* ---------- merged arenas ----------
- * `changes` is what Boostpad has changed in the game folder: game file (lower case) -> op.
+ * `changes` is what OpenW has changed in the game folder: game file (lower case) -> op.
  * Merges and snow are copies, so they can be followed back to the file that is really loaded. */
 
 const isMerge = (op) => op && / stadium in /.test(op.label || '') && op.group !== 'everymatch';

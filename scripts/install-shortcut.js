@@ -1,4 +1,4 @@
-// Puts Boostpad in the Windows Start Menu, so it can be found by searching for it.
+// Puts OpenW in the Windows Start Menu, so it can be found by searching for it.
 // Run with:  npm run shortcut          (add or refresh the shortcut)
 //            npm run shortcut -- --remove
 // It writes assets/icon.ico (from icon.png) and a shortcut that starts this copy
@@ -45,7 +45,9 @@ function buildIco(png) {
 }
 
 app.whenReady().then(() => {
-  const link = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Boostpad.lnk');
+  const programs = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+  const link = path.join(programs, 'OpenW.lnk');
+  fs.rmSync(path.join(programs, 'Boostpad.lnk'), { force: true }); // the app's old name
   if (process.argv.includes('--remove')) {
     fs.rmSync(link, { force: true });
     console.log(`removed ${link}`);
@@ -58,8 +60,8 @@ app.whenReady().then(() => {
     cwd: root,
     icon: ico,
     iconIndex: 0,
-    description: 'Boostpad: cosmetic mod manager for Rocket League',
-    appUserModelId: 'io.github.boostpad', // same id the app sets, so the taskbar treats them as one
+    description: 'OpenW: cosmetic mod manager for Rocket League',
+    appUserModelId: 'io.github.openw', // same id the app sets, so the taskbar treats them as one
   });
   console.log(ok ? `shortcut written: ${link}` : 'could not write the shortcut');
   app.exit(ok ? 0 : 1);

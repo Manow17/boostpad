@@ -6,7 +6,7 @@
 //   ps5.svg   PS5 DualSense, from Zergatul.Obs.InputOverlay (github.com/Zergatul/Zergatul.Obs.InputOverlay)
 //   xbox.svg  Xbox Series controller, from the same project
 //
-// What this does to them: removes their own colours and style sheets (Boostpad colours
+// What this does to them: removes their own colours and style sheets (OpenW colours
 // them with CSS, so the user can recolour), makes ids unique per controller, and tags
 // every button with data-b = its number in the standard Gamepad mapping, so the overlay
 // can light up exactly the button that is pressed.
@@ -41,7 +41,7 @@ function prefixIds(t, prefix) {
 function buildDs4() {
   let t = fs.readFileSync(path.join(SRC, 'ds4', 'base.svgz'), 'utf8');
   t = stripXml(t);
-  // its colours become classes Boostpad styles (see pad.js): which part of the controller each one is
+  // its colours become classes OpenW styles (see pad.js): which part of the controller each one is
   const roles = {
     st1: 'pc-line', st2: 'pc-shine', st3: 'pc-body', st4: 'pc-grip', st5: 'pc-deep', st6: 'pc-well', st9: 'pc-arrow',
     st10: 'pc-trim2', st11: 'pc-trim', st12: 'pc-trim', st13: 'pc-key', st14: 'pc-key', st15: 'pc-key', st16: 'pc-key', st17: 'pc-key',
