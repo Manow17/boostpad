@@ -319,7 +319,7 @@ const STADIUM_WORDS = /stadium|stand|seat|bleach|tribune|grandstand|crowd|arena|
 const DEFAULT_REGION = [{ x0: -6500, x1: 6500, y0: -8000, y1: 8000 }];
 
 // Gameplay pieces: they come from one map only (the base), never from both.
-const GAMEPLAY = /^(VehiclePickup|Goal|PlayerStart|Pylon|PointInSpace|CameraActor|SpectatorVolume|TriggerVolume|DecalBlockingActor|GroundStaticMeshActor|FXActor|LightmassImportanceVolume|PrefabInstance|MapInfo|ArenaSoundSettings|CrowdSounds|StatEvent|SceneCapture|Note|.*Volume(_TA)?$|.*Manager_TA$)/;
+const GAMEPLAY = /^(VehiclePickup|Goal|PlayerStart|Pylon|PointInSpace|CameraActor|SpectatorVolume|TriggerVolume|DecalBlockingActor|FXActor|LightmassImportanceVolume|PrefabInstance|MapInfo|ArenaSoundSettings|CrowdSounds|StatEvent|SceneCapture|Note|.*Volume(_TA)?$|.*Manager_TA$)/;
 // Sky light and fog: they colour everything around, so they come with the outside.
 // (PSC_Constrained_TA: particle systems that follow the camera, like falling snow)
 const ATMOSPHERE = /^(ExponentialHeightFog|HeightFog|WindDirectionalSource|SkyLight|PSC_Constrained)/;
@@ -347,6 +347,9 @@ function keepSide(P, side, { region = DEFAULT_REGION, clear = [], gameplay = sid
       keep = false; // a part that must load nothing
     } else if (it.kind === 'actor') {
       if (/Foliage/.test(it.cls)) keep = side === 'surroundings'; // trees and plants are scenery
+      // the pitch's ground detail (close-up grass tufts drawn only near the camera, lines included) is
+      // part of the stadium: from the stadium arena only, or the place arena's grass draws over the new pitch
+      else if (/^GroundStaticMeshActor/.test(it.cls)) keep = side === 'stadium';
       // something hanging high above the pitch (a moon glow, a sky sprite) is sky, not stadium
       else if (side === 'stadium' && it.box && it.box.c.z > SKY_HEIGHT && !GAMEPLAY.test(it.cls)) keep = false;
       else if (GAMEPLAY.test(it.cls)) keep = gameplay;
