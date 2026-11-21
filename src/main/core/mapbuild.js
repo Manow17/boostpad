@@ -76,13 +76,18 @@ function repack(P, key, renames = {}) {
 function tagged(P, data) {
   const { names } = P;
   if (data.length >= 12 && names[data.readInt32LE(4)] === 'None') return { props: [], end: 12 };
-  let start = -1;
-  for (let s = 0; s <= 60; s += 4) { // some actors start with a few values before their properties
-    if (s + 12 > data.length) break;
+  // Most objects start their properties within the first few words. Actors with a state frame
+  // (moving props, lens flares) have one of odd length first, so every byte is tried, and a
+  // start only counts when the whole property list reads to its end.
+  for (let s = 0; s <= 96 && s + 12 <= data.length; s++) {
     const ty = names[data.readInt32LE(s + 8)];
-    if (names[data.readInt32LE(s)] !== undefined && ty && /Property$/.test(ty)) { start = s; break; }
+    if (names[data.readInt32LE(s)] === undefined || !ty || !/Property$/.test(ty)) continue;
+    const r = readTags(names, data, s);
+    if (r) return r;
   }
-  if (start < 0) return null;
+  return null;
+}
+function readTags(names, data, start) {
   const props = [];
   let p = start;
   for (let guard = 0; guard < 500 && p + 8 <= data.length; guard++) {
@@ -220,7 +225,10 @@ function standBoxes(P) {
     const { c, e } = it.box;
     if (Math.abs(c.x) + e.x > 60000 || Math.abs(c.y) + e.y > 60000) continue; // a mistaken giant: not a stand
     for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
-      out.push({ x0: sx * c.x - e.x - STAND_ROOM, x1: sx * c.x + e.x + STAND_ROOM, y0: sy * c.y - e.y - STAND_ROOM, y1: sy * c.y + e.y + STAND_ROOM });
+      out.push({
+        x0: sx * c.x - e.x - STAND_ROOM, x1: sx * c.x + e.x + STAND_ROOM, y0: sy * c.y - e.y - STAND_ROOM, y1: sy * c.y + e.y + STAND_ROOM,
+        z0: c.z - e.z, z1: c.z + e.z + STAND_ROOM, stands: true, // nothing below the stands (water, ground) is part of them
+      });
     }
   }
   return out;
@@ -232,8 +240,8 @@ function arenaRegion(packages) {
   const seen = new Set();
   for (const P of packages) {
     for (const b of standBoxes(P)) {
-      const r = { x0: Math.round(b.x0), x1: Math.round(b.x1), y0: Math.round(b.y0), y1: Math.round(b.y1) };
-      const k = `${r.x0},${r.x1},${r.y0},${r.y1}`;
+      const r = { x0: Math.round(b.x0), x1: Math.round(b.x1), y0: Math.round(b.y0), y1: Math.round(b.y1), z0: Math.round(b.z0), z1: Math.round(b.z1), stands: true };
+      const k = `${r.x0},${r.x1},${r.y0},${r.y1},${r.z0},${r.z1}`;
       if (!seen.has(k)) { seen.add(k); boxes.push(r); }
     }
   }
@@ -245,12 +253,21 @@ const regionBounds = (region) => region.reduce((a, b) => ({ x: Math.max(a.x, Mat
 const mostlyIn = (box, region) => inRegion(box.c, region)
   && [[1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dy]) => inRegion({ x: box.c.x + dx * box.e.x * 0.5, y: box.c.y + dy * box.e.y * 0.5 }, region));
 const flat = (box) => box.e.z < 150 && (box.e.x > 2000 || box.e.y > 2000);
+// In 3D, inside the stands themselves (not just above or below them): a lily pad on the water
+// next to the stands, or a big rock that only touches them, is not part of the stands.
+const inStands = (pt, region) => region.some((b) => b.stands && pt.x >= b.x0 && pt.x <= b.x1 && pt.y >= b.y0 && pt.y <= b.y1 && pt.z >= b.z0 && pt.z <= b.z1);
+const mostlyInStands = (box, region) => inStands(box.c, region)
+  && [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].every(([dx, dy, dz]) => inStands({ x: box.c.x + dx * box.e.x * 0.5, y: box.c.y + dy * box.e.y * 0.5, z: box.c.z + dz * box.e.z * 0.5 }, region));
+const pitchOnly = (region) => region.filter((b) => !b.stands);
+// names of stadium pieces (an arena's own stadium, wherever its stands box ends)
+const STADIUM_WORDS = /stadium|stand|seat|bleach|tribune|grandstand|crowd|arena|coliseum|field|goal|pitch/i;
 const DEFAULT_REGION = [{ x0: -6500, x1: 6500, y0: -8000, y1: 8000 }];
 
 // Gameplay pieces: they come from one map only (the base), never from both.
 const GAMEPLAY = /^(VehiclePickup|Goal|PlayerStart|Pylon|PointInSpace|CameraActor|SpectatorVolume|TriggerVolume|DecalBlockingActor|GroundStaticMeshActor|FXActor|LightmassImportanceVolume|PrefabInstance|MapInfo|ArenaSoundSettings|CrowdSounds|StatEvent|SceneCapture|Note|.*Volume(_TA)?$|.*Manager_TA$)/;
 // Sky light and fog: they colour everything around, so they come with the outside.
-const ATMOSPHERE = /^(ExponentialHeightFog|HeightFog|WindDirectionalSource|SkyLight)/;
+// (PSC_Constrained_TA: particle systems that follow the camera, like falling snow)
+const ATMOSPHERE = /^(ExponentialHeightFog|HeightFog|WindDirectionalSource|SkyLight|PSC_Constrained)/;
 const LIGHTS = /^(StaticLightCollectionActor|.*Light)$/;
 
 /**
@@ -279,7 +296,8 @@ function keepSide(P, side, { region = DEFAULT_REGION, clear = [], gameplay = sid
       else if (ATMOSPHERE.test(it.cls)) keep = side === 'surroundings';
       else if (LIGHTS.test(it.cls)) keep = keepLights;
       else if (side === 'stadium') keep = !it.box || inRegion(it.box.c, region); // no position: an arena piece
-      else keep = !!it.box && !inRegion(it.box.c, both);
+      // outside side: an actor goes when it stands in this arena's stands or on its pitch, or where the new stadium goes
+      else keep = !!it.box && !inStands(it.box.c, region) && !inRegion(it.box.c, pitchOnly(region)) && !inRegion(it.box.c, clear);
     } else if (SKY.test(it.name)) {
       keep = side === 'surroundings';
     } else if (/collision/i.test(it.name)) {
@@ -296,13 +314,30 @@ function keepSide(P, side, { region = DEFAULT_REGION, clear = [], gameplay = sid
     } else {
       // big flat ground that runs under the other stadium stays when it lies below the pitch
       const ground = flat(it.box) && it.box.c.z + it.box.e.z <= 0 && (it.box.e.x > reach.x || it.box.e.y > reach.y);
-      // this arena's own outer stadium pieces (named after it, within its reach) are stadium, not outside
-      const ownStadium = STADIUM_PART.test(it.name) && !flat(it.box) && Math.abs(it.box.c.x) <= own.x && Math.abs(it.box.c.y) <= own.y;
-      keep = ground || (!ownStadium && !inRegion(it.box.c, both) && !mostlyIn(it.box, both));
+      // this arena's own stadium: what sits in its stands, its pitch, and pieces named after its stadium
+      const ownStadium = !NEVER_STADIUM.test(it.name) && (mostlyInStands(it.box, region) || mostlyIn(it.box, pitchOnly(region))
+        || (STADIUM_WORDS.test(it.name) && Math.abs(it.box.c.x) <= own.x && Math.abs(it.box.c.y) <= own.y));
+      // where the new stadium goes, nothing of the old place may stand
+      // (a combined mesh far bigger than the new stadium, like all the guard towers in one, only goes
+      // when it is mostly inside it; its centre alone says nothing)
+      const clearReach = regionBounds(clear);
+      const huge = !flat(it.box) && (it.box.e.x > clearReach.x * 1.2 || it.box.e.y > clearReach.y * 1.2);
+      const clash = huge ? mostlyIn(it.box, clear) : inRegion(it.box.c, clear) || mostlyIn(it.box, clear);
+      keep = ground || (!ownStadium && !clash);
     }
     if (!keep) it.hide();
     stats[keep ? 'kept' : 'hidden']++;
     if (log) log.push({ what: it.kind === 'actor' ? it.cls : it.kind, name: it.name, x: it.box ? Math.round(it.box.c.x) : null, y: it.box ? Math.round(it.box.c.y) : null, kept: keep });
+  }
+  // weather that follows the camera (falling snow) can hang off any actor, WorldInfo included: a
+  // stadium brought into another arena brings none of it
+  if (side !== 'surroundings') {
+    for (const e of P.t.exports) {
+      if (!/^PSC_Constrained/.test(e.cls)) continue;
+      const d = P.obj(e);
+      const tpl = prop(tagged(P, d), 'Template');
+      if (tpl && tpl.type === 'ObjectProperty' && d.readInt32LE(tpl.at) !== 0) { d.writeInt32LE(0, tpl.at); stats.hidden++; }
+    }
   }
   return stats;
 }
