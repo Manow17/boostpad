@@ -575,9 +575,9 @@ views.lab = () => {
       h('p', { class: 'muted' }, 'Whatever arena a match is played in, you see the one you pick here: online, offline and in Free Play. Everyone else still sees the real arena. All standard arenas have the same pitch, so the ball, walls and goals line up.'),
       h('div', { class: 'row wrap' },
         select(choices.every.map((c) => [c.id, mergedTag(c)]), lab.every, choose('every'), 360),
-        h('button', { class: 'btn primary', disabled: !every || (currentId === lab.every && !everyQueued.length),
-          onclick: () => run(() => api('everyMatch', lab.every), (r) => (r.queued ? `Queued: ${every.label} goes in when Rocket League closes.` : `Every match now shows ${every.label}.`)) },
-        current ? 'Switch to this arena' : 'Use in every match'),
+        h('button', { class: 'btn primary', disabled: !every || (currentId === lab.every && !everyQueued.length) || !!lab.busy,
+          onclick: () => busy('every', () => run(() => api('everyMatch', lab.every), (r) => (r.queued ? `Queued: ${every.label} goes in when Rocket League closes.` : `Every match now shows ${every.label}.`))) },
+        lab.busy === 'every' ? 'Writing arenas…' : current ? 'Switch to this arena' : 'Use in every match'),
         current && h('button', { class: 'btn', onclick: () => run(() => api('everyMatchOff'), S.running ? 'Turning it off when the game closes.' : 'Your arenas are back to normal.') }, 'Turn off')),
       every && every.merged && h('p', { class: 'small' }, `Your merge comes along: every match shows ${every.label}. If you revert that merge later, pick it here again.`),
       h('p', { class: 'muted small' }, current
@@ -590,9 +590,9 @@ views.lab = () => {
         h('b', {}, 'Stadium from'), select(options(split), lab.donor, choose('donor'), 300),
         h('b', {}, 'Placed in'), select(options(split), lab.base, choose('base'), 300)),
       donor && base && mergeHow(plan, donor, base),
-      h('button', { class: 'btn primary lg push', disabled: !plan || plan.how === 'none',
-        onclick: () => run(() => api('mergeArenas', lab.donor, lab.base), (r) => `${r.queued ? 'Queued.' : 'Merged.'} ${playHint(r.play.map((name) => ({ name })))}`) },
-      S.running ? 'Queue merge' : 'Merge')),
+      h('button', { class: 'btn primary lg push', disabled: !plan || plan.how === 'none' || !!lab.busy,
+        onclick: () => busy('merge', () => run(() => api('mergeArenas', lab.donor, lab.base), (r) => `${r.queued ? 'Queued.' : 'Merged.'} ${playHint(r.play.map((name) => ({ name })))}`)) },
+      lab.busy === 'merge' ? 'Taking both arenas apart… (a few seconds)' : S.running ? 'Queue merge' : 'Merge')),
     tile('s5', head('Add snow', h('span', { class: 'tag' }, `${choices.snow.length} arenas`)),
       h('p', { class: 'muted' }, 'Falling snow is only in the game’s four snowy arenas, so an arena built on DFH Stadium, Mannfield, Beckwith Park or Utopia Coliseum can become its snowy version. Merged arenas cannot: the snowy version would replace the merge.'),
       select(choices.snow.map((c) => [c.id, mergedTag(c)]), lab.snow, choose('snow')),
@@ -606,12 +606,15 @@ views.lab = () => {
   const add = (op, key, queued) => {
     const id = op.group || key;
     const row = rows.get(id) || { id, op, keys: [], queued: false };
-    row.keys.push(key);
+    if (!row.keys.includes(key)) row.keys.push(key);
+    // a merge is shown by its arena's own file, not by the files it adds
+    if (row.op.create && !op.create) row.op = op;
     row.queued ||= queued;
     rows.set(id, row);
   };
-  for (const q of S.engine.queue) if (q.op && q.op.kind === 'copy' && q.op.group !== 'everymatch') add(q.op, q.key, true);
-  for (const r of S.engine.active) if (r.op.kind === 'copy' && r.op.group !== 'everymatch') add(r.op, r.key, false);
+  const arenaChange = (op) => op && op.category === 'map' && (op.kind === 'copy' || op.kind === 'build') && op.group !== 'everymatch';
+  for (const q of S.engine.queue) if (arenaChange(q.op)) add(q.op, q.key, true);
+  for (const r of S.engine.active) if (arenaChange(r.op)) add(r.op, r.key, false);
   const mine = [...rows.values()];
   const undo = (row) => (row.op.group ? api('revertGroup', row.op.group)
     : row.queued ? api('unqueue', row.keys[0]) : api('revert', row.keys[0]));
@@ -623,6 +626,13 @@ views.lab = () => {
       : h('p', { class: 'muted' }, 'Nothing merged or snowed. Your arenas are original.')));
   return root;
 };
+
+// A slow Map Merge action: its button says it is working, and the others wait.
+async function busy(what, fn) {
+  lab.busy = what;
+  render();
+  try { return await fn(); } finally { lab.busy = null; render(); }
+}
 
 // What a merge of the chosen pair will do, in words.
 function mergeHow(plan, donor, base) {
