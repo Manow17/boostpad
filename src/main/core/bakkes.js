@@ -1,33 +1,55 @@
-// BakkesMod bridge for the Training page: the Freeplay Checkpoint plugin's settings and
-// buttons. Boostpad never touches the game for this; BakkesMod does. While BakkesMod runs,
-// changes go through its RCON plugin (a websocket on this PC, password from its own
-// config). While it is closed, its config files are edited; it reads them when it starts.
+// BakkesMod bridge for the Training page: Boostpad's own BakkesMod plugin, Boostpad Training
+// (bakkesmod-plugin/, built into assets/bakkesmod/BoostpadTraining.dll), with freeplay
+// checkpoints and impulse setups.
+//
+// Boostpad never touches the running game itself; the plugin does, inside BakkesMod. Boostpad
+// installs it, binds its buttons and writes its settings: live over BakkesMod's RCON (a
+// websocket on this PC, password from BakkesMod's own config) while it runs with the game, and
+// in BakkesMod's files otherwise (binds.cfg, cfg/boostpad.cfg run right after the plugin loads).
 const fs = require('fs');
 const path = require('path');
 
 const DIR = () => path.join(process.env.APPDATA || '', 'bakkesmod', 'bakkesmod');
 const CFG = () => path.join(DIR(), 'cfg', 'config.cfg');
 const BINDS = () => path.join(DIR(), 'cfg', 'binds.cfg');
+const PLUGINS = () => path.join(DIR(), 'cfg', 'plugins.cfg');
+const OUR_CFG = () => path.join(DIR(), 'cfg', 'boostpad.cfg');
+const DLL_NAME = 'BoostpadTraining.dll';
+const BUNDLED = path.join(__dirname, '..', '..', '..', 'assets', 'bakkesmod', DLL_NAME);
 
-// The plugin's commands that can sit on a button, and the setting that holds each button.
+// The plugin's commands that sit on a button.
 const ACTIONS = [
-  { id: 'freeze', command: 'cpt_freeze', key: 'cpt_freeze_key', label: 'Rewind', hint: 'Freezes the game; move the stick to scrub back and forth through the last seconds.' },
-  { id: 'checkpoint', command: 'cpt_do_checkpoint', key: 'cpt_do_checkpoint_key', label: 'Save / load checkpoint', hint: 'While rewinding: saves this moment. While playing: jumps back to the last checkpoint.' },
-  { id: 'prev', command: 'cpt_prev_checkpoint', key: 'cpt_prev_checkpoint_key', label: 'Previous checkpoint' },
-  { id: 'next', command: 'cpt_next_checkpoint', key: 'cpt_next_checkpoint_key', label: 'Next checkpoint' },
-  { id: 'freezeBall', command: 'cpt_freeze_ball', key: 'cpt_freeze_ball_key', label: 'Freeze the ball' },
-  { id: 'mirror', command: 'cpt_mirror_state', key: 'cpt_mirror_state_key', label: 'Mirror the moment' },
+  { id: 'rewind', command: 'bp_rewind', label: 'Rewind', hint: 'Freezes Free Play; steer left and right to go back and forth through the last seconds. Press again to play on from there.' },
+  { id: 'checkpoint', command: 'bp_checkpoint', label: 'Save / load checkpoint', hint: 'While rewinding: keeps this moment. While playing: jumps back to it.' },
+  { id: 'prev', command: 'bp_checkpoint_prev', label: 'Previous checkpoint' },
+  { id: 'next', command: 'bp_checkpoint_next', label: 'Next checkpoint' },
+  { id: 'freezeBall', command: 'bp_freeze_ball', label: 'Hold the ball', hint: 'The ball stays where it is until you press again.' },
+  { id: 'mirror', command: 'bp_mirror', label: 'Mirror the moment', hint: 'Left becomes right, to practise both sides.' },
+  { id: 'impulse', command: 'bp_impulse', label: 'Impulse (current setup)', hint: 'Launches the ball as the selected impulse setup says.' },
 ];
-
-// The plugin's options Boostpad shows, with their type.
-const OPTIONS = {
-  cpt_history_length: 'int', cpt_load_after_reset: 'int', cpt_variance_tot: 'int',
-  cpt_reset_on_goal: 'bool', cpt_reset_on_ball_ground: 'bool', cpt_next_instead_of_reset: 'bool',
-  cpt_randomize_loads: 'bool', cpt_mirror_loads: 'bool', cpt_clean_history: 'bool', cpt_show_boost: 'bool',
-  cpt_variance_ball_dir: 'bool', cpt_variance_ball_spd: 'bool', cpt_variance_ball_rot: 'bool',
-  cpt_variance_car_dir: 'bool', cpt_variance_car_spd: 'bool', cpt_variance_car_rot: 'bool',
-  cpt_disable_training: 'bool', cpt_disable_workshop: 'bool',
+const DEFAULT_BUTTONS = {
+  rewind: 'XboxTypeS_RightThumbStick', checkpoint: 'XboxTypeS_Back', prev: 'XboxTypeS_DPad_Left', next: 'XboxTypeS_DPad_Right',
+  freezeBall: 'XboxTypeS_DPad_Up', mirror: 'XboxTypeS_DPad_Down', impulse: 'T',
 };
+
+// Plugin settings, with type and default.
+const OPTIONS = {
+  bp_history: ['int', 30], bp_scrub_speed: ['float', 1.5], bp_variance: ['int', 0], bp_reset_on_goal: ['bool', false],
+  bp_mirror_random: ['bool', false], bp_in_training: ['bool', false], bp_show_text: ['bool', true],
+};
+// An impulse setup: where the ball starts around the car and how it comes at you.
+const SETUP_FIELDS = {
+  kind: 'bp_impulse_kind', distance: 'bp_impulse_distance', side: 'bp_impulse_side', height: 'bp_impulse_height', speed: 'bp_impulse_speed',
+  targetHeight: 'bp_impulse_target_height', lead: 'bp_impulse_lead', spin: 'bp_impulse_spin', random: 'bp_impulse_random', stopCar: 'bp_impulse_stop_car',
+};
+const KINDS = [['pass', 'Pass along the ground'], ['lob', 'Lob over to you'], ['high', 'High ball from ahead'], ['wall', 'Off the side wall'], ['bounce', 'Bouncing ball'], ['custom', 'Custom']];
+const DEFAULT_SETUPS = [
+  { id: 'pass', name: 'Ground pass', key: '', kind: 'pass', distance: 2400, side: 35, height: 100, speed: 1500, targetHeight: 100, lead: 0.9, spin: 0, random: 20, stopCar: false },
+  { id: 'lob', name: 'Lob to the car', key: '', kind: 'lob', distance: 2600, side: 0, height: 100, speed: 1300, targetHeight: 900, lead: 1.2, spin: 1, random: 20, stopCar: false },
+  { id: 'aerial', name: 'Aerial ball', key: '', kind: 'high', distance: 3000, side: 0, height: 1400, speed: 1200, targetHeight: 1200, lead: 1.4, spin: 0, random: 15, stopCar: false },
+  { id: 'wall', name: 'Wall feed', key: '', kind: 'wall', distance: 2200, side: 90, height: 600, speed: 1400, targetHeight: 300, lead: 0.9, spin: 2, random: 20, stopCar: false },
+  { id: 'bounce', name: 'Bounce dribble', key: '', kind: 'bounce', distance: 900, side: 0, height: 900, speed: 900, targetHeight: 93, lead: 0.6, spin: 0, random: 10, stopCar: true },
+];
 
 // Buttons BakkesMod knows by these names (Unreal's Xbox names; PlayStation in brackets).
 const BUTTONS = [
@@ -37,9 +59,12 @@ const BUTTONS = [
   ['XboxTypeS_LeftThumbStick', 'Left stick click (L3)'], ['XboxTypeS_RightThumbStick', 'Right stick click (R3)'],
   ['XboxTypeS_Back', 'Back / View (Share)'], ['XboxTypeS_Start', 'Start / Menu (Options)'],
   ['XboxTypeS_DPad_Up', 'D-pad up'], ['XboxTypeS_DPad_Down', 'D-pad down'], ['XboxTypeS_DPad_Left', 'D-pad left'], ['XboxTypeS_DPad_Right', 'D-pad right'],
-  ['One', 'Keyboard 1'], ['Two', 'Keyboard 2'], ['Three', 'Keyboard 3'], ['Four', 'Keyboard 4'],
-  ['R', 'Keyboard R'], ['T', 'Keyboard T'], ['G', 'Keyboard G'], ['F', 'Keyboard F'],
+  ['One', 'Keyboard 1'], ['Two', 'Keyboard 2'], ['Three', 'Keyboard 3'], ['Four', 'Keyboard 4'], ['Five', 'Keyboard 5'], ['Six', 'Keyboard 6'],
+  ['R', 'Keyboard R'], ['T', 'Keyboard T'], ['G', 'Keyboard G'], ['F', 'Keyboard F'], ['V', 'Keyboard V'], ['B', 'Keyboard B'],
+  ['F5', 'Keyboard F5'], ['F6', 'Keyboard F6'], ['F7', 'Keyboard F7'], ['F8', 'Keyboard F8'],
 ];
+
+/* ---------- BakkesMod's files ---------- */
 
 // config.cfg: `name "value" //description`
 function readCvars(text) {
@@ -62,8 +87,7 @@ function writeCvars(text, values) {
   return lines.join('\r\n');
 }
 
-// binds.cfg: `bind KEY "cmd1;cmd2"`. Each plugin command ends up on exactly the button chosen
-// for it; other commands on the same buttons (BakkesMod's own) stay.
+// binds.cfg: `bind KEY "cmd1;cmd2"`
 function readBinds(text) {
   const out = {};
   for (const line of String(text).split(/\r?\n/)) {
@@ -72,13 +96,18 @@ function readBinds(text) {
   }
   return out;
 }
-function writeBinds(text, keys) {
+// Boostpad's commands go on the chosen buttons; any earlier Boostpad command is taken off,
+// Freeplay Checkpoint's (cpt_) commands are taken off the buttons Boostpad uses, and
+// BakkesMod's own commands stay.
+const OURS = (c) => /^bp_/.test(c);
+function writeBinds(text, wanted) {
   const binds = readBinds(text);
-  const ours = new Set(ACTIONS.map((a) => a.command));
-  for (const key of Object.keys(binds)) binds[key] = binds[key].filter((c) => !ours.has(c));
-  for (const a of ACTIONS) {
-    const key = keys[a.id];
-    if (key) (binds[key] ??= []).push(a.command);
+  // a setup's button carries several commands joined into one
+  const setupCommand = (c) => c.startsWith('bp_impulse_kind ');
+  for (const key of Object.keys(binds)) binds[key] = binds[key].filter((c) => !OURS(c) && !setupCommand(c));
+  for (const [key, cmds] of Object.entries(wanted)) {
+    binds[key] = (binds[key] || []).filter((c) => !/^cpt_/.test(c));
+    binds[key].push(...cmds);
   }
   const head = String(text).split(/\r?\n/).filter((l) => l.startsWith('//'));
   const body = Object.entries(binds).filter(([, cmds]) => cmds.length).sort(([a], [b]) => a.localeCompare(b))
@@ -86,12 +115,12 @@ function writeBinds(text, keys) {
   return [...head, ...body, ''].join('\n');
 }
 
-const typed = (name, v) => (OPTIONS[name] === 'bool' ? v === '1' || v === 1 || v === true : Number(v) || 0);
-const raw = (name, v) => (OPTIONS[name] === 'bool' ? (v ? '1' : '0') : String(Math.max(0, Math.round(Number(v) || 0))));
+// What a setup's settings are as commands, and its own button's command (set it, then launch).
+const setupValues = (s) => Object.fromEntries(Object.entries(SETUP_FIELDS).map(([field, cvar]) => [cvar, field === 'kind' ? s.kind : field === 'stopCar' ? (s.stopCar ? '1' : '0') : String(Number(s[field]) || 0)]));
+const setupCommands = (s) => [...Object.entries(setupValues(s)).map(([k, v]) => `${k} ${v}`), 'bp_impulse'];
 
 /* ---------- RCON ---------- */
 
-// Sends commands to BakkesMod. Resolves with false when it is not listening.
 function rcon(commands, { port, password, timeout = 3000 } = {}) {
   return new Promise((resolve) => {
     let ws;
@@ -107,64 +136,104 @@ function rcon(commands, { port, password, timeout = 3000 } = {}) {
     };
   });
 }
+function rconSettings() {
+  const cfg = readCvars(fs.existsSync(CFG()) ? fs.readFileSync(CFG(), 'utf8') : '');
+  return { enabled: cfg.rcon_enabled === '1', port: Number(cfg.rcon_port) || 9002, password: cfg.rcon_password || '' };
+}
 
 /* ---------- the page's state and changes ---------- */
 
-function state(isRunning) {
+const sameFile = (a, b) => { try { return fs.readFileSync(a).equals(fs.readFileSync(b)); } catch { return false; } };
+
+// saved = Boostpad's own copy of the Training settings ({ buttons, options, setups, current }).
+function state(live, saved = {}) {
   const dir = DIR();
-  const installed = fs.existsSync(path.join(dir, 'cfg'));
-  if (!installed) return { installed: false };
-  const cfg = readCvars(fs.existsSync(CFG()) ? fs.readFileSync(CFG(), 'utf8') : '');
-  const plugins = fs.existsSync(path.join(dir, 'cfg', 'plugins.cfg')) ? fs.readFileSync(path.join(dir, 'cfg', 'plugins.cfg'), 'utf8') : '';
-  const options = Object.fromEntries(Object.keys(OPTIONS).map((k) => [k, typed(k, cfg[k])]));
-  const buttons = Object.fromEntries(ACTIONS.map((a) => [a.id, cfg[a.key] || '']));
+  if (!fs.existsSync(path.join(dir, 'cfg'))) return { installed: false };
+  const ours = path.join(dir, 'plugins', DLL_NAME);
+  const plugins = fs.existsSync(PLUGINS()) ? fs.readFileSync(PLUGINS(), 'utf8') : '';
   return {
-    installed,
-    running: !!isRunning,
-    plugin: fs.existsSync(path.join(dir, 'plugins', 'CheckpointPlugin.dll')),
-    loaded: /plugin\s+load\s+checkpointplugin/i.test(plugins),
-    rcon: cfg.rcon_enabled === '1',
-    options, buttons,
+    installed: true, running: !!live,
+    plugin: fs.existsSync(ours), upToDate: fs.existsSync(ours) && sameFile(ours, BUNDLED), bundled: fs.existsSync(BUNDLED),
+    loaded: /plugin\s+load\s+boostpadtraining/i.test(plugins),
+    rcon: rconSettings().enabled,
+    buttons: { ...DEFAULT_BUTTONS, ...(saved.buttons || {}) },
+    options: Object.fromEntries(Object.entries(OPTIONS).map(([k, [, d]]) => [k, saved.options && k in saved.options ? saved.options[k] : d])),
+    setups: saved.setups && saved.setups.length ? saved.setups : DEFAULT_SETUPS,
+    current: saved.current || 'pass',
     actions: ACTIONS.map(({ id, label, hint }) => ({ id, label, hint })),
-    choices: BUTTONS,
+    choices: BUTTONS, kinds: KINDS,
   };
 }
 
+const raw = (name, v) => {
+  const [type] = OPTIONS[name];
+  if (type === 'bool') return v ? '1' : '0';
+  if (type === 'int') return String(Math.round(Number(v) || 0));
+  return String(Number(v) || 0);
+};
+
 /**
- * Saves options and buttons. While BakkesMod runs: over RCON, then BakkesMod writes its own
- * files. While it is closed: straight into its files. Returns { via: 'rcon' | 'files' }.
+ * Installs or updates the plugin. While BakkesMod runs it is unloaded, replaced and loaded again
+ * over RCON; otherwise it is added to plugins.cfg and loads the next time BakkesMod starts.
  */
-async function save({ options = {}, buttons = {} }, bakkesRunning) {
+async function install(live) {
+  if (!fs.existsSync(BUNDLED)) throw new Error('The plugin is not built. Run bakkesmod-plugin\\build.cmd.');
+  const dest = path.join(DIR(), 'plugins', DLL_NAME);
+  const r = rconSettings();
+  if (live && r.enabled) await rcon(['plugin unload boostpadtraining'], r);
+  try { fs.copyFileSync(BUNDLED, dest); } catch (e) { throw new Error(`Could not copy the plugin into BakkesMod (${e.code}). Close Rocket League and try again.`); }
+  let plugins = fs.existsSync(PLUGINS()) ? fs.readFileSync(PLUGINS(), 'utf8') : '';
+  if (!/plugin\s+load\s+boostpadtraining/i.test(plugins)) plugins = `${plugins.replace(/\s*$/, '')}\nplugin load boostpadtraining\nexec boostpad\n`;
+  fs.writeFileSync(PLUGINS(), plugins);
+  if (live && r.enabled) await rcon(['plugin load boostpadtraining', 'exec boostpad'], r);
+  return { via: live && r.enabled ? 'rcon' : 'files' };
+}
+
+/**
+ * Writes buttons, options and the current impulse setup: cfg/boostpad.cfg (run after the plugin
+ * loads), binds.cfg, and live over RCON when BakkesMod runs with the game.
+ * changes: { buttons, options, setups, current }
+ */
+async function save(changes, live) {
   const known = new Set(BUTTONS.map(([k]) => k));
   const values = {};
-  for (const [k, v] of Object.entries(options)) if (k in OPTIONS) values[k] = raw(k, v);
-  for (const a of ACTIONS) if (a.id in buttons) {
-    if (buttons[a.id] && !known.has(buttons[a.id])) throw new Error(`Unknown button ${buttons[a.id]}`);
-    values[a.key] = buttons[a.id] || '';
-  }
-  const cfgText = fs.readFileSync(CFG(), 'utf8');
-  const cfg = readCvars(cfgText);
-  const keys = Object.fromEntries(ACTIONS.map((a) => [a.id, a.id in buttons ? buttons[a.id] : cfg[a.key]]));
+  for (const [k, v] of Object.entries(changes.options || {})) if (k in OPTIONS) values[k] = raw(k, v);
+  const setups = changes.setups || DEFAULT_SETUPS;
+  const current = setups.find((s) => s.id === changes.current) || setups[0];
+  if (current) Object.assign(values, setupValues(current));
+
+  const wanted = {};
+  const add = (key, cmds) => { if (!key) return; if (!known.has(key)) throw new Error(`Unknown button ${key}`); (wanted[key] ??= []).push(...cmds); };
+  for (const a of ACTIONS) add((changes.buttons || {})[a.id], [a.command]);
+  for (const s of setups) add(s.key, setupCommands(s));
+
+  const cfgLines = Object.entries(values).map(([k, v]) => `${k} "${v}"`);
+  fs.writeFileSync(OUR_CFG(), `// written by Boostpad (Training page)\r\n${cfgLines.join('\r\n')}\r\n`);
   const bindsText = fs.existsSync(BINDS()) ? fs.readFileSync(BINDS(), 'utf8') : '';
-  const newBindsText = writeBinds(bindsText, keys);
-  if (bakkesRunning) {
-    if (cfg.rcon_enabled !== '1') throw new Error('BakkesMod is running with RCON switched off. Close BakkesMod and save again.');
-    const commands = Object.entries(values).map(([k, v]) => `${k} "${v}"`);
-    // only the buttons whose commands change are bound again
-    const before = readBinds(bindsText), after = readBinds(newBindsText);
+  const newBinds = writeBinds(bindsText, wanted);
+  const r = rconSettings();
+  if (live) {
+    if (!r.enabled) throw new Error('BakkesMod is running with RCON switched off. Close Rocket League and save again.');
+    const before = readBinds(bindsText), after = readBinds(newBinds);
+    const commands = [...cfgLines.map((l) => l.replace(/^(\w+) "(.*)"$/, '$1 "$2"'))];
     for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
       const a = (after[key] || []).join(';'), b = (before[key] || []).join(';');
       if (a !== b) commands.push(a ? `bind ${key} "${a}"` : `unbind ${key}`);
     }
     commands.push('writeconfig');
-    const ok = await rcon(commands, { port: Number(cfg.rcon_port) || 9002, password: cfg.rcon_password || '' });
-    if (!ok) throw new Error('BakkesMod is running but did not answer. Start Rocket League with BakkesMod, or close BakkesMod, then save again.');
-    fs.writeFileSync(BINDS(), newBindsText); // what BakkesMod now has; it writes the same on exit
-    return { via: 'rcon' };
+    if (!(await rcon(commands, r))) throw new Error('BakkesMod is running but did not answer. Close Rocket League and save again.');
   }
-  fs.writeFileSync(CFG(), writeCvars(cfgText, values));
-  fs.writeFileSync(BINDS(), newBindsText);
-  return { via: 'files' };
+  fs.writeFileSync(BINDS(), newBinds);
+  // config.cfg too, so the values hold even before boostpad.cfg runs
+  if (!live && fs.existsSync(CFG())) fs.writeFileSync(CFG(), writeCvars(fs.readFileSync(CFG(), 'utf8'), values));
+  return { via: live ? 'rcon' : 'files' };
 }
 
-module.exports = { state, save, readCvars, writeCvars, readBinds, writeBinds, rcon, ACTIONS, OPTIONS, BUTTONS };
+// Try a setup right now (BakkesMod must be running with the game, in Free Play).
+async function tryNow(setup) {
+  const r = rconSettings();
+  if (!r.enabled) throw new Error('BakkesMod RCON is off');
+  if (!(await rcon(setupCommands(setup), r))) throw new Error('Start Rocket League with BakkesMod and open Free Play first.');
+}
+
+module.exports = { state, save, install, tryNow, readCvars, writeCvars, readBinds, writeBinds, setupCommands, rcon, ACTIONS, OPTIONS, BUTTONS, DEFAULT_SETUPS, DEFAULT_BUTTONS, KINDS };

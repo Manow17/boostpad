@@ -125,8 +125,8 @@ function art(name, glyph, cls = '') {
 
 const toggle = (checked, onchange) => h('input', { type: 'checkbox', role: 'switch', class: 'switch', checked, onchange: (e) => onchange(e.target.checked) });
 
-function slider(min, max, value, onchange, oninput) {
-  const el = h('input', { type: 'range', class: 'slider grow', min, max, value });
+function slider(min, max, value, onchange, oninput, step = 1) {
+  const el = h('input', { type: 'range', class: 'slider grow', min, max, step, value });
   const paint = () => el.style.setProperty('--p', `${((el.value - min) / (max - min)) * 100}%`);
   paint();
   el.addEventListener('input', () => { paint(); if (oninput) oninput(Number(el.value)); });
@@ -654,69 +654,105 @@ function mergeHow(plan, donor, base) {
 
 /* ---------- training ---------- */
 
-// Freeplay Checkpoint is a BakkesMod plugin; this page sets its buttons and options.
+// Boostpad Training, Boostpad's own BakkesMod plugin: freeplay checkpoints and impulse setups.
 let training = null;
-const tr = { draft: null };
-const trainingDraft = (t) => ({ buttons: { ...t.buttons }, options: { ...t.options } });
+const tr = { draft: null, open: null };
+const trainingDraft = (t) => JSON.parse(JSON.stringify({ buttons: t.buttons, options: t.options, setups: t.setups, current: t.current }));
 
 views.training = () => {
   const root = bento();
   if (!training) {
     api('training').then((t) => { training = t; tr.draft = t.installed ? trainingDraft(t) : null; if (ui.tab === 'training') render(true); });
-    root.append(tile('s12', empty('rewind', 'Looking for BakkesMod', 'Freeplay checkpoints come from BakkesMod.')));
+    root.append(tile('s12', empty('rewind', 'Looking for BakkesMod', 'Boostpad’s training tools run inside BakkesMod.')));
     return root;
   }
   const t = training;
   if (!t.installed) {
     root.append(noteTile('info', 's12', h('b', {}, 'BakkesMod is not installed'),
-      h('p', {}, 'Freeplay checkpoints are a BakkesMod plugin (Freeplay Checkpoint by NitrOP). Install BakkesMod from bakkesmod.com, then open this page again.')));
+      h('p', {}, 'Rewinding Free Play and launching the ball need something inside the game. Boostpad does not reach into Rocket League itself (anti-cheat would see that); it brings its own plugin for BakkesMod, the mod tool Psyonix tolerates. Install BakkesMod from bakkesmod.com, then open this page again.')));
     return root;
   }
-  if (!t.plugin || !t.loaded) {
-    root.append(noteTile('warn', 's12', h('b', {}, t.plugin ? 'Freeplay Checkpoint is not switched on' : 'Freeplay Checkpoint is not installed'),
-      h('p', {}, t.plugin ? 'In Rocket League press F2, open Plugins → Plugin Manager and tick Freeplay Checkpoint.' : 'In Rocket League press F2, open Plugins → Plugin Manager, and install Freeplay Checkpoint (plugin 179). Or type bpm_install 179 in the BakkesMod console (F6).')));
-  }
   const d = tr.draft;
-  const opt = (k) => d.options[k];
-  const setOpt = (k) => (v) => { d.options[k] = v; render(); };
+  const changed = JSON.stringify(d) !== JSON.stringify(trainingDraft(t));
   const choices = [['', 'Not set'], ...t.choices];
   const used = {};
-  for (const a of t.actions) if (d.buttons[a.id]) used[d.buttons[a.id]] = (used[d.buttons[a.id]] || 0) + 1;
-  const changed = JSON.stringify(d) !== JSON.stringify(trainingDraft(t));
-  const optRow = (k, label, hint) => h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, label), hint && h('div', { class: 'muted small' }, hint)), toggle(opt(k), setOpt(k)));
-  const sliderRow = (k, label, min, max, unit) => h('div', { class: 'opt-row' }, h('div', { style: 'min-width:190px' }, h('b', {}, label)),
-    slider(min, max, opt(k), setOpt(k), (v) => { d.options[k] = v; const out = document.getElementById(`v-${k}`); if (out) out.textContent = `${v}${unit}`; }),
-    h('span', { id: `v-${k}`, class: 'muted small', style: 'min-width:48px;text-align:right' }, `${opt(k)}${unit}`));
+  const mark = (k) => { if (k) used[k] = (used[k] || 0) + 1; };
+  Object.values(d.buttons).forEach(mark); d.setups.forEach((s) => mark(s.key));
+  const twice = (k) => k && used[k] > 1 && h('div', { class: 'small', style: 'color:var(--warn, #f59e0b)' }, 'This button does two things now.');
+  const reload = (r) => { training = r.training; tr.draft = trainingDraft(r.training); };
+
+  // the plugin itself
+  const status = !t.plugin ? 'Not installed' : !t.upToDate ? 'Update ready' : t.loaded ? 'Installed' : 'Installed, not switched on';
+  root.append(tile('s12 ink', head('Boostpad Training', h('span', { class: `tag ${t.plugin && t.upToDate ? 'on' : ''}` }, status)),
+    h('p', { class: 'muted' }, 'Boostpad’s own Free Play tools. Rewind: freeze the game and scrub back through the last seconds with the stick, keep the moment as a checkpoint, and jump back to it to try the shot again. Impulse setups: one button puts the ball somewhere around your car and sends it at you: passes, lobs, high balls, wall feeds, bounces.'),
+    h('p', { class: 'muted small' }, 'They run inside BakkesMod as a small plugin that comes with Boostpad (its source is in the bakkesmod-plugin folder). Free Play and Custom Training only, never online.'),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn primary', disabled: !t.bundled || (t.plugin && t.upToDate && t.loaded),
+        onclick: () => run(() => api('trainingInstall'), (r) => { reload(r); return r.via === 'rcon' ? 'Installed and running.' : 'Installed. It starts with BakkesMod next time.'; }) },
+      t.plugin ? (t.upToDate ? 'Switch on' : 'Update') : 'Install'),
+      h('span', { class: 'muted small grow' }, t.running ? 'BakkesMod is running with the game: changes apply straight away.' : 'BakkesMod is closed: changes apply when it starts with Rocket League.'))));
+
+  const setOpt = (k) => (v) => { d.options[k] = v; render(); };
+  const optRow = (k, label, hint) => h('div', { class: 'opt-row' }, h('div', { class: 'grow' }, h('b', {}, label), hint && h('div', { class: 'muted small' }, hint)), toggle(d.options[k], setOpt(k)));
+  const sliderRow = (obj, k, label, min, max, unit = '', step = 1) => h('div', { class: 'opt-row' }, h('div', { style: 'min-width:170px' }, h('b', {}, label)),
+    slider(min, max, obj[k], (v) => { obj[k] = v; render(); }, (v) => { obj[k] = v; const o = document.getElementById(`v-${label}`); if (o) o.textContent = `${step < 1 ? v.toFixed(1) : v}${unit}`; }, step),
+    h('span', { id: `v-${label}`, class: 'muted small', style: 'min-width:56px;text-align:right' }, `${step < 1 ? Number(obj[k]).toFixed(1) : obj[k]}${unit}`));
 
   root.append(
-    tile('s12 ink', head('How it works', h('span', { class: `tag ${t.running ? 'on' : ''}` }, t.running ? 'BakkesMod running' : 'BakkesMod closed')),
-      h('p', { class: 'muted' }, 'In Free Play, press Rewind to freeze the game and scrub back through the last seconds with the stick. Press Save / load to keep that moment as a checkpoint; press it again while playing to jump straight back and try the shot again. Previous and next step through your saved checkpoints.'),
-      h('p', { class: 'muted small' }, t.running ? 'Changes go straight into BakkesMod.' : 'Changes are written to BakkesMod’s settings and apply the next time it starts with Rocket League.')),
     tile('s7', head('Buttons'),
       h('div', { class: 'list' }, t.actions.map((a) => h('div', { class: 'opt-row' },
-        h('div', { class: 'grow' }, h('b', {}, a.label), a.hint && h('div', { class: 'muted small' }, a.hint),
-          d.buttons[a.id] && used[d.buttons[a.id]] > 1 && h('div', { class: 'small', style: 'color:var(--warn, #f59e0b)' }, 'This button does two things now.')),
+        h('div', { class: 'grow' }, h('b', {}, a.label), a.hint && h('div', { class: 'muted small' }, a.hint), twice(d.buttons[a.id])),
         select(choices, d.buttons[a.id] || '', (v) => { d.buttons[a.id] = v; render(); }, 230))))),
-    tile('s5', head('Checkpoints'),
-      sliderRow('cpt_history_length', 'Rewind history', 5, 120, ' s'),
-      optRow('cpt_reset_on_goal', 'Back to the checkpoint after a goal'),
-      optRow('cpt_reset_on_ball_ground', 'Back to the checkpoint when the ball lands', 'For aerial and air-dribble practice.'),
-      optRow('cpt_next_instead_of_reset', 'Reset goes to the next checkpoint', 'Work through a list of saved shots.'),
-      optRow('cpt_randomize_loads', 'Load a random checkpoint'),
-      optRow('cpt_mirror_loads', 'Sometimes load it mirrored', 'Practise the same shot from the other side.'),
-      optRow('cpt_show_boost', 'Show boost used while rewinding')),
-    tile('s12', head('Variation', h('span', { class: 'muted small' }, 'Changes each load a little so you don’t learn one exact shot.')),
+    tile('s5', head('Rewind and checkpoints'),
+      sliderRow(d.options, 'bp_history', 'Rewind history', 5, 120, ' s'),
+      optRow('bp_reset_on_goal', 'Back to the checkpoint after a goal'),
+      optRow('bp_mirror_random', 'Sometimes load it mirrored', 'Practise the same shot from the other side.'),
+      sliderRow(d.options, 'bp_variance', 'Variation', 0, 100, '%'),
+      optRow('bp_in_training', 'Also in Custom Training'),
+      optRow('bp_show_text', 'Show what happens on screen')));
+
+  // impulse setups
+  const setups = d.setups;
+  const cur = setups.find((s) => s.id === d.current) || setups[0];
+  const openSetup = setups.find((s) => s.id === tr.open);
+  root.append(tile('s12', head('Impulse setups', h('span', { class: 'tag' }, setups.length)),
+    h('p', { class: 'muted' }, 'The Impulse button launches the selected setup. A setup can also have a button of its own.'),
+    h('div', { class: 'list' }, setups.map((s) => h('div', { class: `item ${s.id === d.current ? 'sel' : ''}` },
+      art(s.name, 'ball'),
+      h('div', { class: 'grow' }, h('b', {}, s.name), h('div', { class: 'small muted' }, `${(t.kinds.find(([k]) => k === s.kind) || [, s.kind])[1]} · ${s.distance} away · ${s.speed} speed${s.key ? ` · ${(t.choices.find(([k]) => k === s.key) || [, s.key])[1]}` : ''}`), twice(s.key)),
+      s.id === d.current ? h('span', { class: 'tag on' }, 'Impulse button') : h('button', { class: 'btn sm', onclick: () => { d.current = s.id; render(); } }, 'Use'),
+      h('button', { class: 'btn sm', disabled: !t.running, title: t.running ? 'Launch it in the game now' : 'Start Rocket League with BakkesMod first',
+        onclick: () => run(() => api('trainingTry', s), 'Launched in the game.') }, 'Try'),
+      h('button', { class: 'btn sm', onclick: () => { tr.open = tr.open === s.id ? null : s.id; render(); } }, tr.open === s.id ? 'Close' : 'Edit')))),
+    openSetup && h('div', { class: 'stack', style: 'margin-top:12px' },
+      h('div', { class: 'row wrap' },
+        field({ value: openSetup.name, maxlength: 30, oninput: (e) => { openSetup.name = e.target.value; }, onchange: () => render() }),
+        select(t.kinds, openSetup.kind, (v) => { openSetup.kind = v; render(); }, 230),
+        select([['', 'No button of its own'], ...t.choices], openSetup.key || '', (v) => { openSetup.key = v; render(); }, 230),
+        h('button', { class: 'btn', disabled: setups.length < 2, onclick: () => { d.setups = setups.filter((s) => s !== openSetup); if (d.current === openSetup.id) d.current = d.setups[0].id; tr.open = null; render(); } }, 'Delete')),
       h('div', { class: 'grid2' },
-        optRow('cpt_variance_ball_dir', 'Ball direction'), optRow('cpt_variance_ball_spd', 'Ball speed'), optRow('cpt_variance_ball_rot', 'Ball spin'),
-        optRow('cpt_variance_car_dir', 'Car direction'), optRow('cpt_variance_car_spd', 'Car speed'), optRow('cpt_variance_car_rot', 'Car rotation')),
-      sliderRow('cpt_variance_tot', 'How much', 0, 100, '')),
-    tile('s12', h('div', { class: 'row' },
-      h('p', { class: 'muted small grow' }, changed ? 'You have changes that are not saved yet.' : 'Everything is saved.'),
-      h('button', { class: 'btn', disabled: !changed, onclick: () => { tr.draft = trainingDraft(t); render(); } }, 'Undo changes'),
-      h('button', { class: 'btn primary', disabled: !changed, onclick: () => run(() => api('trainingSave', tr.draft), (r) => {
-        training = r.training; tr.draft = trainingDraft(r.training);
-        return r.via === 'rcon' ? 'Saved. BakkesMod has it now.' : 'Saved. BakkesMod picks it up next time it starts.';
-      }) }, 'Save'))));
+        sliderRow(openSetup, 'distance', 'Distance', 300, 6000),
+        sliderRow(openSetup, 'side', 'Comes from', -180, 180, '°'),
+        sliderRow(openSetup, 'height', 'Starts at height', 93, 1900),
+        sliderRow(openSetup, 'speed', 'Speed', 200, 6000),
+        sliderRow(openSetup, 'targetHeight', 'Meets you at height', 93, 1800),
+        sliderRow(openSetup, 'lead', 'Leads your car by', 0, 3, ' s', 0.1),
+        sliderRow(openSetup, 'spin', 'Spin', 0, 6),
+        sliderRow(openSetup, 'random', 'Randomness', 0, 100, '%')),
+      h('p', { class: 'muted small' }, '“Comes from”: 0° straight ahead, 90° from the right, −90° from the left, 180° from behind. The ball flies a real arc under the game’s gravity to where your car will be.')),
+    h('div', { class: 'row', style: 'margin-top:10px' },
+      h('button', { class: 'btn', disabled: setups.length >= 24, onclick: () => {
+        const id = `s${Date.now().toString(36)}`;
+        d.setups.push({ ...(cur || {}), id, name: 'My setup', key: '' }); tr.open = id; render();
+      } }, 'New setup'))));
+
+  root.append(tile('s12', h('div', { class: 'row' },
+    h('p', { class: 'muted small grow' }, changed ? 'You have changes that are not saved yet.' : 'Everything is saved.'),
+    h('button', { class: 'btn', disabled: !changed, onclick: () => { tr.draft = trainingDraft(t); render(); } }, 'Undo changes'),
+    h('button', { class: 'btn primary', disabled: !changed, onclick: () => run(() => api('trainingSave', tr.draft), (r) => {
+      reload(r);
+      return r.via === 'rcon' ? 'Saved. BakkesMod has it now.' : 'Saved. BakkesMod picks it up next time it starts.';
+    }) }, 'Save'))));
   return root;
 };
 

@@ -360,16 +360,25 @@ function makeEngine(cooked, running = { value: false }) {
     assert.ok(steam.withoutShortcut(twice).equals(file));
   });
 
-  test('checkpoint buttons and options are written into BakkesMod\'s files', () => {
+  test('training buttons and settings are written into BakkesMod\'s files', () => {
     const bakkes = require('../src/main/core/bakkes');
-    const cfg = 'rcon_port "9002" //\r\ncpt_freeze_key "XboxTypeS_RightThumbStick" //Key to bind\r\ncpt_history_length "30" //Save history';
-    const out = bakkes.writeCvars(cfg, { cpt_freeze_key: 'XboxTypeS_LeftThumbStick', cpt_reset_on_goal: '1' });
-    assert.deepStrictEqual(bakkes.readCvars(out), { rcon_port: '9002', cpt_freeze_key: 'XboxTypeS_LeftThumbStick', cpt_history_length: '30', cpt_reset_on_goal: '1' });
-    assert.match(out, /cpt_freeze_key "XboxTypeS_LeftThumbStick" \/\/Key to bind/); // descriptions stay
-    const binds = '//Warning: rewritten\nbind F2 "togglemenu settings"\nbind XboxTypeS_DPad_Up "default_up;cpt_freeze_ball"\nbind XboxTypeS_RightThumbStick "cpt_freeze"\n';
-    // freeze moves to L3, freeze-ball is switched off: R3 loses its bind, D-pad up keeps BakkesMod's own command
-    const b = bakkes.readBinds(bakkes.writeBinds(binds, { freeze: 'XboxTypeS_LeftThumbStick', freezeBall: '' }));
-    assert.deepStrictEqual(b, { F2: ['togglemenu settings'], XboxTypeS_DPad_Up: ['default_up'], XboxTypeS_LeftThumbStick: ['cpt_freeze'] });
+    const cfg = 'rcon_port "9002" //\r\nbp_history "30" //Seconds of Free Play';
+    const out = bakkes.writeCvars(cfg, { bp_history: '45', bp_variance: '20' });
+    assert.deepStrictEqual(bakkes.readCvars(out), { rcon_port: '9002', bp_history: '45', bp_variance: '20' });
+    assert.match(out, /bp_history "45" \/\/Seconds of Free Play/); // descriptions stay
+    const binds = '//Warning: rewritten\nbind F2 "togglemenu settings"\nbind XboxTypeS_DPad_Up "default_up;cpt_freeze_ball"\nbind XboxTypeS_RightThumbStick "cpt_freeze"\nbind One "bp_rewind"\n';
+    // Boostpad's rewind moves to R3: NitrOP's command leaves that button, Boostpad's old one leaves One,
+    // BakkesMod's own commands stay; a setup's button sets the setup and launches
+    const setup = bakkes.DEFAULT_SETUPS[1];
+    const b = bakkes.readBinds(bakkes.writeBinds(binds, { XboxTypeS_RightThumbStick: ['bp_rewind'], T: bakkes.setupCommands(setup) }));
+    assert.deepStrictEqual(b.XboxTypeS_RightThumbStick, ['bp_rewind']);
+    assert.deepStrictEqual(b.XboxTypeS_DPad_Up, ['default_up', 'cpt_freeze_ball']);
+    assert.ok(!b.One && b.F2);
+    assert.strictEqual(b.T[0], 'bp_impulse_kind lob');
+    assert.strictEqual(b.T[b.T.length - 1], 'bp_impulse');
+    // writing again gives the same file (old setup commands are taken off first)
+    const once = bakkes.writeBinds(binds, { T: bakkes.setupCommands(setup) });
+    assert.strictEqual(bakkes.writeBinds(once, { T: bakkes.setupCommands(setup) }), once);
   });
 
   test('ground under the new pitch is lowered, even when it has no position of its own', () => {
