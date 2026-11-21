@@ -103,7 +103,7 @@ Not implemented: custom paint colours, 3D garage preview, custom balls and sound
 
 ## Install
 
-Run `OpenW-Setup-<version>.exe`. It installs OpenW for all users (in Program Files, with Start Menu and desktop shortcuts) and, in the same step, the two controller drivers OpenW Input uses ([drivers/](drivers/README.md)), so Windows' permission prompt for the setup is the only one and the app never shows a driver step. Drivers already on the PC are left as they are. If a driver wants a restart, the setup offers one at the end.
+Download `OpenW-Setup-<version>.exe` from [Releases](https://github.com/Manow17/openw/releases) and run it. It installs OpenW for all users (in Program Files, with Start Menu and desktop shortcuts) and, in the same step, the two controller drivers OpenW Input uses ([drivers/](drivers/README.md)), so Windows' permission prompt for the setup is the only one and the app never shows a driver step. Drivers already on the PC are left as they are. If a driver wants a restart, the setup offers one at the end.
 
 The setup is not code-signed (that needs a paid certificate), so Windows SmartScreen may say it "protected your PC": choose More info, then Run anyway. Uninstall under Windows Settings, Apps; your settings and backups stay in `%APPDATA%\OpenW`, and the drivers stay too, since other apps (DS4Windows, for one) may use them; they have their own entries there.
 
