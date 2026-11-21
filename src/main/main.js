@@ -531,12 +531,14 @@ const api = {
   },
   // install the drivers OpenW comes with; a running helper starts again to use them
   async inputInstallDrivers(list) {
-    const results = await inputLib.installDrivers(Array.isArray(list) ? list : ['vigem']);
+    const want = Array.isArray(list) ? list : ['vigem'];
+    if (want.includes('hidhide')) saveInput({ hidhideTried: true }); // optional: asked for once, not on every start
+    const results = await inputLib.installDrivers(want);
     if (input.running) {
       await input.stop();
       input.start(inputProfile(), { own: settings.get('input').own !== false });
     }
-    return { results, info: { status: input.status, drivers: await inputLib.drivers() } };
+    return { results, info: { status: input.status, drivers: await inputLib.drivers() }, state: snapshot() };
   },
 
   async importKeys() {

@@ -186,7 +186,7 @@ function runElevated(body, refused) {
 // Changing HidHide needs administrator rights.
 function elevated(commands) {
   const exe = hidHideCli();
-  if (!exe) return Promise.reject(new Error('HidHide is not installed.'));
+  if (!exe) return Promise.reject(new Error('Hiding is not set up yet. Turn OpenW Input on once.'));
   const body = `$cli = ${psQuote(exe)}\r\n${commands.map((args) => `& $cli ${args.map(psQuote).join(' ')}`).join('\r\n')}`;
   return runElevated(body, 'Windows did not give HidHide permission, so nothing changed.');
 }
