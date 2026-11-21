@@ -5,15 +5,65 @@
   "description": "Free, open-source cosmetic mod manager for Rocket League: item swaps, workshop maps, map merge, presets, overlay, and a Steam-style controller remapper.",
   "main": "src/main/main.js",
   "license": "MIT",
+  "author": "OpenW contributors",
   "scripts": {
     "start": "electron .",
     "test": "node test/run.js",
     "icon": "electron scripts/make-icon.js",
     "shortcut": "electron scripts/install-shortcut.js",
     "merge-test": "node scripts/merge-test/run.js",
-    "build-input": "node scripts/build-input.js"
+    "build-input": "node scripts/build-input.js",
+    "dist": "electron-builder --win nsis --x64"
   },
   "devDependencies": {
-    "electron": "^45.4.1"
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "io.github.openw",
+    "productName": "OpenW",
+    "copyright": "MIT License, OpenW contributors",
+    "electronDist": "node_modules/electron/dist",
+    "asar": false,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "package.json",
+      "LICENSE",
+      "src/**/*",
+      "assets/**/*",
+      "!assets/icon-source.webp",
+      "bin/**/*",
+      "drivers/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "executableName": "OpenW"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "OpenW",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "include": "build/installer.nsh",
+      "artifactName": "OpenW-Setup-${version}.exe",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    }
   }
 }

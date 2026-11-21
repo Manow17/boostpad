@@ -43,7 +43,7 @@ Per stick, as in Steam Input: dead zone shape (circle; cross, where each axis ha
 
 The curve names are Steam's; their exponents (Aggressive 0.6, Relaxed 1.5, Wide 2, Extra Wide 3) are OpenW's own approximation, as Steam does not publish its numbers. The page draws each setting with the same maths the helper uses, and a test checks the two agree.
 
-**Drivers come with OpenW: nothing to download.** The virtual controller needs ViGEmBus, a free, signed driver by Nefarius Software Solutions (the one DS4Windows uses). OpenW ships its official installer, and HidHide's, in [`drivers/`](drivers/README.md), checks them against their SHA-256 and installs both silently, together, the first time you turn OpenW Input on. Windows' own permission prompt is the only thing you see (no app can skip it for a driver); the app itself never shows a driver step. If Windows wants a restart to finish, a message says so. Remove them any time under Windows Settings, Apps. Only a driver can add a controller that games see, and on Windows 10 and 11 with Secure Boot a driver only loads if it is signed through Microsoft, which needs a company code-signing certificate. The one way around that, Windows' test-signing mode, is not supported by Easy Anti-Cheat ([Facepunch support](https://support.facepunchstudios.com/hc/en-us/articles/214240705-Driver-Signature-Enforcement-has-been-disabled)), so Rocket League would not run. Windows' own driverless gamepad injection (`InputInjector`) refuses to start for a desktop app (tested), and games read controllers through XInput, which would not see it anyway. So OpenW ships ViGEmBus rather than a driver of its own.
+**Drivers come with OpenW: nothing to download.** The virtual controller needs ViGEmBus, a free, signed driver by Nefarius Software Solutions (the one DS4Windows uses). OpenW ships its official installer, and HidHide's, in [`drivers/`](drivers/README.md). The OpenW setup installs both (see [Install](#install)); run from source, OpenW checks them against their SHA-256 and installs both silently, together, the first time you turn OpenW Input on. Windows' own permission prompt is the only thing you see (no app can skip it for a driver); the app itself never shows a driver step. If Windows wants a restart to finish, a message says so. Remove them any time under Windows Settings, Apps. Only a driver can add a controller that games see, and on Windows 10 and 11 with Secure Boot a driver only loads if it is signed through Microsoft, which needs a company code-signing certificate. The one way around that, Windows' test-signing mode, is not supported by Easy Anti-Cheat ([Facepunch support](https://support.facepunchstudios.com/hc/en-us/articles/214240705-Driver-Signature-Enforcement-has-been-disabled)), so Rocket League would not run. Windows' own driverless gamepad injection (`InputInjector`) refuses to start for a desktop app (tested), and games read controllers through XInput, which would not see it anyway. So OpenW ships ViGEmBus rather than a driver of its own.
 
 **Hiding the real controller**, so games do not get every press twice:
 
@@ -101,7 +101,20 @@ Known limits of item swaps in this version:
 
 Not implemented: custom paint colours, 3D garage preview, custom balls and sounds, stadium colours, and changing your name, title or rank **inside** the game. The last one would need code injected into the running game, which OpenW does not do.
 
-## Run it
+## Install
+
+Run `OpenW-Setup-<version>.exe`. It installs OpenW for all users (in Program Files, with Start Menu and desktop shortcuts) and, in the same step, the two controller drivers OpenW Input uses ([drivers/](drivers/README.md)), so Windows' permission prompt for the setup is the only one and the app never shows a driver step. Drivers already on the PC are left as they are. If a driver wants a restart, the setup offers one at the end.
+
+The setup is not code-signed (that needs a paid certificate), so Windows SmartScreen may say it "protected your PC": choose More info, then Run anyway. Uninstall under Windows Settings, Apps; your settings and backups stay in `%APPDATA%\OpenW`, and the drivers stay too, since other apps (DS4Windows, for one) may use them; they have their own entries there.
+
+To build the setup yourself (it lands in `dist/`):
+
+```
+npm install
+npm run dist
+```
+
+## Run it from source
 
 Requires [Node.js](https://nodejs.org) 20 or newer.
 
@@ -160,6 +173,7 @@ src/shared/      transform.js (OpenW Input's stick and trigger maths and profile
 src/renderer/    app.js, styles.css, pad.js (controller drawing), overlay + nowplaying (overlay windows)
 native/          openw-input.cpp (the input helper; built to bin/ with `npm run build-input`)
 drivers/         the official ViGEmBus and HidHide installers OpenW installs (credits and checksums in its README)
+build/           installer.nsh: the setup's extra step that installs those drivers
 assets/          app icon (icon-source.webp, turned into icon.png with `npm run icon`), fonts, and
                  controllers/ (MIT drawings, credits in CREDITS.md; rebuilt with `node scripts/prepare-controllers.js`)
 test/            core tests
