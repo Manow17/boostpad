@@ -661,17 +661,24 @@ const TX = window.OpenWTransform;
 const PAD_NAMES = { xinput: 'Xbox controller', ds4: 'DualShock 4', dualsense: 'DualSense', edge: 'DualSense Edge' };
 const CURVE_OPTS = [['linear', 'Linear'], ['aggressive', 'Aggressive'], ['relaxed', 'Relaxed'], ['wide', 'Wide'], ['extrawide', 'Extra Wide'], ['custom', 'Custom']];
 const SIDES = [['left', 'Left'], ['right', 'Right'], ['none', 'None']];
+// Steam's own descriptions of its options
 const SHAPE_TEXT = {
-  circle: 'Round dead zone; the stick keeps its round range.',
-  cross: 'Each axis has its own dead zone, so straight lines stay straight.',
-  square: 'Diagonals reach full on both axes, like a square gate.',
+  circle: 'An even response across the whole throw of the stick.',
+  cross: 'Each axis has its own dead zone, which favours straight up, down, left and right.',
+  square: 'Diagonals reach full on both axes.',
 };
+const SOURCE_TEXT = {
+  none: 'The raw input of the stick is sent (only the response curve applies).',
+  calibration: 'The dead zone of this controller\u2019s calibration.',
+  custom: 'Set up a custom dead zone for this profile.',
+};
+const TRIGGER_CURVES = CURVE_OPTS.filter(([v]) => v !== 'custom');
 // [Xbox name, PlayStation name]
 const SRC_LABEL = {
   A: ['A', 'Cross'], B: ['B', 'Circle'], X: ['X', 'Square'], Y: ['Y', 'Triangle'], LB: ['LB', 'L1'], RB: ['RB', 'R1'],
   LS: ['Left stick click', 'L3'], RS: ['Right stick click', 'R3'], Back: ['View', 'Share / Create'], Start: ['Menu', 'Options'], Guide: ['Xbox button', 'PS button'],
   Up: ['D-pad up'], Down: ['D-pad down'], Left: ['D-pad left'], Right: ['D-pad right'],
-  Touchpad: ['Touchpad click'], Mute: ['Mute button'], FnL: ['Left Fn'], FnR: ['Right Fn'], PaddleL: ['Left back paddle'], PaddleR: ['Right back paddle'],
+  Touchpad: ['Touchpad click, left half'], TouchpadRight: ['Touchpad click, right half'], Mute: ['Mute button'], FnL: ['Left Fn'], FnR: ['Right Fn'], PaddleL: ['Left back paddle'], PaddleR: ['Right back paddle'],
 };
 const OUT_LABEL = { A: 'A', B: 'B', X: 'X', Y: 'Y', LB: 'LB', RB: 'RB', LS: 'Left stick click', RS: 'Right stick click', Back: 'View (Back)', Start: 'Menu (Start)', Guide: 'Xbox button',
   Up: 'D-pad up', Down: 'D-pad down', Left: 'D-pad left', Right: 'D-pad right', LT: 'Left trigger, full', RT: 'Right trigger, full' };
@@ -688,8 +695,9 @@ const srcName = (src) => { const [xb, ps] = SRC_LABEL[src]; const k = padKind();
 function shownSources() {
   const k = padKind(), all = TX.SOURCES;
   if (k === 'xinput') return all.slice(0, 15);
-  if (k === 'ds4') return all.slice(0, 16);
-  return k === 'edge' ? all : all.slice(0, 17);
+  const pads = ['TouchpadRight'];
+  if (k === 'ds4') return [...all.slice(0, 16), ...pads];
+  return k === 'edge' ? all : [...all.slice(0, 17), ...pads];
 }
 async function refreshInput() { ctl.info = await api('inputInfo'); if (ui.tab === 'controller') render(); }
 // The first time OpenW Input is turned on, the drivers that come with OpenW go in, quietly and
@@ -721,8 +729,9 @@ function canvasEl(w, ht) {
 const cssVar = (el, name) => getComputedStyle(el).getPropertyValue(name).trim();
 
 // The stick's square: dead zone, where the output can reach, your stick and what the game gets.
+// raw and the maths are in Steam's units (-32768..32767).
 function drawStick(el, c, raw) {
-  const g = el.ctx(), W = el.w, R = W / 2 - 14, cx = W / 2, cy = W / 2;
+  const g = el.ctx(), W = el.w, R = W / 2 - 14, cx = W / 2, cy = W / 2, U = TX.M;
   const line = cssVar(el, '--line-2'), muted = cssVar(el, '--muted'), accent = cssVar(el, '--accent'), soft = cssVar(el, '--accent-soft');
   g.lineWidth = 1;
   g.strokeStyle = line; g.strokeRect(cx - R, cy - R, 2 * R, 2 * R);
@@ -731,19 +740,22 @@ function drawStick(el, c, raw) {
   // where the output can reach: the round range run through the settings
   g.strokeStyle = accent; g.fillStyle = soft; g.lineWidth = 1.5; g.beginPath();
   for (let i = 0; i <= 144; i++) {
-    const a = (i / 144) * Math.PI * 2, [x, y] = TX.stick(Math.cos(a), Math.sin(a), c);
-    if (i) g.lineTo(cx + x * R, cy - y * R); else g.moveTo(cx + x * R, cy - y * R);
+    const a = (i / 144) * Math.PI * 2, [x, y] = TX.stick(Math.cos(a) * U, Math.sin(a) * U, c);
+    if (i) g.lineTo(cx + (x / U) * R, cy - (y / U) * R); else g.moveTo(cx + (x / U) * R, cy - (y / U) * R);
   }
   g.fill(); g.stroke();
-  // dead zone
+  // dead zone: round for Circle, a cross for Cross, a square for Square (per axis), none without one
   g.fillStyle = 'rgba(251,113,133,.22)';
-  if (c.shape === 1) { const d = c.inner * R; g.fillRect(cx - d, cy - R, 2 * d, 2 * R); g.fillRect(cx - R, cy - d, 2 * R, 2 * d); }
-  else { g.beginPath(); g.arc(cx, cy, c.inner * R, 0, Math.PI * 2); g.fill(); }
+  const d = (c.inner / U) * R, off = c.source === 0 || (c.inner === 0 && c.outer >= 32000);
+  if (off) { /* no dead zone */ } else if (c.shape === 0) { g.fillRect(cx - d, cy - R, 2 * d, 2 * R); g.fillRect(cx - R, cy - d, 2 * R, 2 * d); }
+  else if (c.shape === 2) g.fillRect(cx - d, cy - d, 2 * d, 2 * d);
+  else { g.beginPath(); g.arc(cx, cy, d, 0, Math.PI * 2); g.fill(); }
   if (!raw) return;
   const [ox, oy] = TX.stick(raw[0], raw[1], c);
-  g.strokeStyle = muted; g.lineWidth = 1; g.beginPath(); g.moveTo(cx + raw[0] * R, cy - raw[1] * R); g.lineTo(cx + ox * R, cy - oy * R); g.stroke();
-  g.fillStyle = muted; g.beginPath(); g.arc(cx + raw[0] * R, cy - raw[1] * R, 6, 0, Math.PI * 2); g.fill();
-  g.fillStyle = accent; g.beginPath(); g.arc(cx + ox * R, cy - oy * R, 7, 0, Math.PI * 2); g.fill();
+  const px = (v) => (v / U) * R;
+  g.strokeStyle = muted; g.lineWidth = 1; g.beginPath(); g.moveTo(cx + px(raw[0]), cy - px(raw[1])); g.lineTo(cx + px(ox), cy - px(oy)); g.stroke();
+  g.fillStyle = muted; g.beginPath(); g.arc(cx + px(raw[0]), cy - px(raw[1]), 6, 0, Math.PI * 2); g.fill();
+  g.fillStyle = accent; g.beginPath(); g.arc(cx + px(ox), cy - px(oy), 7, 0, Math.PI * 2); g.fill();
 }
 
 // Input travel -> output, with the current travel marked.
@@ -781,7 +793,7 @@ views.controller = () => {
   const preview = () => { api('inputPreview', p); ctl.ui.draw(); };
   const redo = () => { save(); render(); };
   const lbl = (title, sub, grow) => h('div', { class: `lbl${grow ? ' grow' : ''}` }, h('b', {}, title), sub && h('div', { class: 'muted small' }, sub));
-  const valRow = (title, sub, obj, key, min, max, fmt = (v) => `${v}%`, step = 1) => {
+  const valRow = (title, sub, obj, key, min, max, fmt = (v) => String(v), step = 1) => {
     const val = h('span', { class: 'val' }, fmt(obj[key]));
     return h('div', { class: 'opt-row' }, lbl(title, sub),
       slider(min, max, obj[key], (v) => { obj[key] = v; save(); }, (v) => { obj[key] = v; val.textContent = fmt(v); preview(); }, step), val);
@@ -808,11 +820,12 @@ views.controller = () => {
 
   // --- profiles ---
   // a pasted profile code is added on Enter
-  const code = field({ placeholder: 'Paste a profile code', style: 'width:170px', onkeydown: (e) => { if (e.key === 'Enter' && code.value.trim()) run(() => api('inputImport', code.value), 'Profile added.'); } });
+  const code = field({ placeholder: 'Paste a code', style: 'width:120px', onkeydown: (e) => { if (e.key === 'Enter' && code.value.trim()) run(() => api('inputImport', code.value), 'Profile added.'); } });
   root.append(tile('s12 bar', h('b', {}, 'Profile'),
-    select(inp.profiles.map((x) => [x.id, x.name]), inp.profile, (v) => run(() => api('inputSelect', v)), 190),
-    field({ value: p.name, maxlength: 40, style: 'width:150px', 'aria-label': 'Profile name', onchange: (e) => run(() => api('inputRename', p.id, e.target.value), 'Renamed.') }),
-    select([['', 'New profile…'], ['standard', 'Standard'], ['square', 'Square dead zone'], ['precise', 'Precise']], '', (v) => v && run(() => api('inputNew', v), 'Profile added.'), 150),
+    select(inp.profiles.map((x) => [x.id, x.name]), inp.profile, (v) => run(() => api('inputSelect', v)), 170),
+    field({ value: p.name, maxlength: 40, style: 'width:130px', 'aria-label': 'Profile name', onchange: (e) => run(() => api('inputRename', p.id, e.target.value), 'Renamed.') }),
+    select([['', 'New profile…'], ['standard', 'Steam defaults'], ['square', 'Square dead zone']], '', (v) => v && run(() => api('inputNew', v), 'Profile added.'), 140),
+    steamPicker(),
     h('button', { class: 'btn sm', onclick: () => run(() => api('inputNew', '', p.id), 'Copy made.') }, 'Duplicate'),
     h('button', { class: 'btn sm', onclick: async () => { await navigator.clipboard.writeText(await api('inputExport', p.id)); toast('Profile code copied.'); } }, 'Copy code'),
     h('span', { class: 'grow' }), code,
@@ -824,16 +837,16 @@ views.controller = () => {
   const tag = (off = 'Turn on to see it live') => h('span', { class: `tag${st.running ? ' on' : ''}` }, st.running ? 'Live' : off);
   const sec = ctl.section;
   if (sec === 'left' || sec === 'right') {
-    const s = p.sticks[sec], i = sec === 'left' ? 0 : 1;
+    const s = p.sticks[sec], i = sec === 'left' ? 0 : 1, U = TX.M;
     const map = canvasEl(260, 260), curve = canvasEl(260, 140), read = h('div', { class: 'muted small mono' });
     map.classList.add('stickmap');
     const rawOf = (live) => (st.running && live ? [live.raw[i * 2], live.raw[i * 2 + 1]] : ctl.fake[sec] || null);
     drawers.push((live) => {
       const c = TX.stickCfg(s), raw = rawOf(live);
       drawStick(map, c, raw);
-      const m = raw ? (c.shape === 1 ? Math.max(Math.abs(raw[0]), Math.abs(raw[1])) : Math.hypot(raw[0], raw[1])) : null;
-      drawCurve(curve, (x) => TX.shapeMag(x, c), m);
-      if (raw) { const [ox, oy] = TX.stick(raw[0], raw[1], c); read.textContent = `stick ${raw[0].toFixed(2)}, ${raw[1].toFixed(2)}  →  game ${ox.toFixed(2)}, ${oy.toFixed(2)}`; } else read.textContent = ' ';
+      // the output along the horizontal axis
+      drawCurve(curve, (x) => TX.stick(x * U, 0, c)[0] / U, raw ? Math.hypot(raw[0], raw[1]) / U : null);
+      if (raw) { const [ox, oy] = TX.stick(raw[0], raw[1], c); read.textContent = `stick ${Math.round(raw[0])}, ${Math.round(raw[1])}  →  game ${ox}, ${oy}`; } else read.textContent = ' ';
     });
     // with OpenW Input off, drag in the square to see what the settings do
     const drag = (e) => {
@@ -841,52 +854,57 @@ views.controller = () => {
       const r = map.getBoundingClientRect(), R = r.width / 2 - 14;
       let x = (e.clientX - r.left - r.width / 2) / R, y = -(e.clientY - r.top - r.height / 2) / R;
       const len = Math.hypot(x, y); if (len > 1) { x /= len; y /= len; }
-      ctl.fake[sec] = [x, y]; ctl.ui.draw();
+      ctl.fake[sec] = [Math.round(x * U), Math.round(y * U)]; ctl.ui.draw();
     };
     map.addEventListener('pointerdown', (e) => { map.setPointerCapture(e.pointerId); drag(e); });
     map.addEventListener('pointermove', drag);
     map.addEventListener('pointerup', () => { ctl.fake[sec] = null; ctl.ui.draw(); });
+    const dz = s.source !== 'none';
     root.append(
       tile('s5 ctl', head(`${sec === 'left' ? 'Left' : 'Right'} stick`, tag('Drag to try')), map,
         h('div', { class: 'legend' }, h('span', {}, h('i', { class: 'dot muted' }), 'Your stick'), h('span', {}, h('i', { class: 'dot accent' }), 'What the game gets'), h('span', {}, h('i', { class: 'dot dead' }), 'Dead zone')),
         curve, read,
-        h('p', { class: 'muted small' }, 'In Rocket League, turn the game’s own Controller Deadzone down (Settings, Controls), since OpenW Input handles the dead zone now.')),
-      tile('s7 ctl', head('Settings', h('button', { class: 'btn sm', onclick: () => { p.sticks[sec] = TX.blank('').sticks[sec]; redo(); } }, 'Reset')),
-        choiceRow('Dead zone shape', SHAPE_TEXT[s.shape], seg([['circle', 'Circle'], ['cross', 'Cross'], ['square', 'Square']], s.shape, (v) => { s.shape = v; redo(); })),
-        valRow('Inner dead zone', 'Travel from the centre that does nothing.', s, 'inner', 0, 50),
-        valRow('Outer dead zone', 'Travel at the edge that already counts as full.', s, 'outer', 0, 30),
-        choiceRow('Response curve', 'How output grows with travel.', select(CURVE_OPTS, s.curve, (v) => { s.curve = v; redo(); }, 160)),
-        s.curve === 'custom' && valRow('Curve exponent', 'Under 1 is quicker off the centre, over 1 is finer near it.', s, 'exponent', 0.2, 5, (v) => Number(v).toFixed(2), 0.05),
-        valRow('Output anti-deadzone', 'Where the output starts, to step over the game’s own dead zone.', s, 'anti', 0, 50),
-        valRow('Anti-deadzone buffer', 'Eases into the anti-deadzone, so tiny moves stay tiny.', s, 'buffer', 0, 50),
-        valRow('Horizontal sensitivity', '', s, 'scaleX', 50, 200),
-        valRow('Vertical sensitivity', '', s, 'scaleY', 50, 200),
+        h('p', { class: 'muted small' }, 'The same maths as Steam Input, measured from the Steam client: the same settings give the same output, to within 5 of 32767. In Rocket League, turn the game’s own Controller Deadzone down, since this handles it.')),
+      tile('s7 ctl', head('Joystick', h('button', { class: 'btn sm', onclick: () => { p.sticks[sec] = TX.blank('').sticks[sec]; redo(); } }, 'Steam defaults')),
+        h('div', { class: 'sub' }, 'Deadzone'),
+        choiceRow('Deadzone source', SOURCE_TEXT[s.source], seg([['none', 'None'], ['calibration', 'Calibration'], ['custom', 'Custom']], s.source, (v) => { s.source = v; redo(); })),
+        dz && valRow('Deadzone inner', 'Travel from the centre that does nothing.', s, 'inner', 0, 32000),
+        dz && valRow('Deadzone outer', 'How far from the centre counts as full.', s, 'outer', 0, 32000),
+        dz && choiceRow('Deadzone shape', SHAPE_TEXT[s.shape], seg([['cross', 'Cross'], ['circle', 'Circle'], ['square', 'Square']], s.shape, (v) => { s.shape = v; redo(); })),
+        dz && valRow('Anti-deadzone', 'Adds to the smallest output, to get past a game’s own dead zone.', s, 'anti', 0, 32767),
+        dz && valRow('Anti-deadzone buffer', 'Re-establishes a dead zone after the anti-deadzone.', s, 'antiBuffer', 0, 32767),
+        h('div', { class: 'sub' }, 'Sensitivity'),
+        choiceRow('Stick response curve', s.curve === 'linear' ? 'Maps the input to the output 1:1.' : 'Relaxed and wider curves give finer small movements; Aggressive reaches full sooner.', select(CURVE_OPTS, s.curve, (v) => { s.curve = v; redo(); }, 160)),
+        s.curve === 'custom' && valRow('Custom response curve', 'Lower is more relaxed, higher more aggressive (Relaxed is 100).', s, 'customCurve', 25, 375),
+        valRow('Horizontal scale', '', s, 'scaleX', 0, 100, (v) => `${v}%`),
+        valRow('Vertical scale', '', s, 'scaleY', 0, 100, (v) => `${v}%`),
         choiceRow('Invert horizontal', '', flip(s, 'invertX')),
         choiceRow('Invert vertical', '', flip(s, 'invertY')),
+        h('div', { class: 'sub' }, 'Output'),
         choiceRow('Output joystick', 'Which stick of the virtual controller it moves.', seg(SIDES, s.output, (v) => { s.output = v; redo(); })),
-        choiceRow('Output axis', '', seg([['both', 'Both'], ['x', 'Horizontal'], ['y', 'Vertical']], s.axes, (v) => { s.axes = v; redo(); })),
-        choiceRow('Outer ring button', 'Held while the stick is pushed past the ring.', select(OUT_OPTS, s.ring.to, (v) => { s.ring.to = v; redo(); }, 160)),
-        s.ring.to && valRow('Outer ring', '', s.ring, 'at', 50, 100),
-        s.ring.to && choiceRow('Invert outer ring', 'Held inside the ring instead.', flip(s.ring, 'invert')),
-        valRow('Smoothing', 'Steadies a shaky stick but adds a little delay; off is fastest.', s, 'smoothing', 0, 100, (v) => (v ? `${v}%` : 'Off'))));
+        choiceRow('Outer ring command', 'A button held while the stick is pushed past the radius.', select(OUT_OPTS, s.ring.to, (v) => { s.ring.to = v; redo(); }, 160)),
+        s.ring.to && valRow('Command radius', '', s.ring, 'radius', 1, 32767),
+        s.ring.to && choiceRow('Command invert', 'Held inside the radius instead.', flip(s.ring, 'invert')),
+        h('div', { class: 'sub' }, 'OpenW extra'),
+        valRow('Smoothing', 'Steadies a shaky stick but adds a little delay. Steam has no such setting; off is the same as Steam.', s, 'smoothing', 0, 100, (v) => (v ? `${v}%` : 'Off'))));
   } else if (sec === 'triggers') {
     for (const [side, name, i] of [['left', 'Left', 4], ['right', 'Right', 5]]) {
-      const t = p.triggers[side], curve = canvasEl(260, 130), rawBar = h('i'), outBar = h('i');
+      const t = p.triggers[side], curve = canvasEl(260, 130), rawBar = h('i'), outBar = h('i'), U = TX.M;
       drawers.push((live) => {
-        const c = TX.trigCfg(t), raw = st.running && live ? live.raw[i] : null;
-        drawCurve(curve, (x) => TX.trigger(x, c), raw);
+        const c = TX.trigCfg(t), raw = st.running && live ? live.raw[i] / U : null;
+        drawCurve(curve, (x) => TX.trigger(x * U, c) / U, raw);
         rawBar.style.width = `${(raw || 0) * 100}%`;
-        outBar.style.width = `${(st.running && live ? live.out[i] : 0) * 100}%`;
+        outBar.style.width = `${(st.running && live ? live.out[i] / U : 0) * 100}%`;
       });
       root.append(tile('s6 ctl', head(`${name} trigger`, tag()), curve,
         h('div', { class: 'opt-row' }, lbl('Your trigger'), h('div', { class: 'meter raw grow' }, rawBar)),
         h('div', { class: 'opt-row' }, lbl('Game gets'), h('div', { class: 'meter grow' }, outBar)),
-        valRow('Range start', 'Pull before anything happens.', t, 'start', 0, 90),
-        valRow('Range end', 'Pull that already counts as full.', t, 'end', 10, 100),
-        choiceRow('Response curve', '', select(CURVE_OPTS, t.curve, (v) => { t.curve = v; redo(); }, 150)),
-        t.curve === 'custom' && valRow('Curve exponent', '', t, 'exponent', 0.2, 5, (v) => Number(v).toFixed(2), 0.05),
-        choiceRow('Hair trigger', 'Full the moment it moves down, off the moment it moves back up.', flip(t, 'hair')),
-        choiceRow('Output trigger', '', seg(SIDES, t.output, (v) => { t.output = v; redo(); }))));
+        valRow('Trigger range start', 'Pull before anything happens.', t, 'start', 0, 32767),
+        valRow('Trigger range end', 'Pull that already counts as full.', t, 'end', 0, 32767),
+        choiceRow('Response curve', '', select(TRIGGER_CURVES, t.curve, (v) => { t.curve = v; redo(); }, 150)),
+        choiceRow('Output trigger', '', seg(SIDES, t.output, (v) => { t.output = v; redo(); })),
+        choiceRow('Hair trigger', 'OpenW extra: full the moment it moves down, off the moment it moves back up.', flip(t, 'hair')),
+        h('p', { class: 'muted small' }, 'Steam’s range and defaults (1000 to 32000). Steam’s live preview does not cover triggers, so unlike the sticks this was not measured.')));
     }
   } else if (sec === 'buttons') {
     const lights = [];
@@ -925,6 +943,23 @@ views.controller = () => {
   requestAnimationFrame(() => ctl.ui.draw());
   return root;
 };
+
+// "Import from Steam": the Steam Input layouts on this PC, newest first.
+let steamLayouts = null;
+function steamPicker() {
+  if (!steamLayouts) {
+    steamLayouts = [];
+    api('inputSteamLayouts').then((l) => { steamLayouts = l; if (ui.tab === 'controller') render(); }).catch(() => { steamLayouts = []; });
+  }
+  if (!steamLayouts.length) return null;
+  const names = { ps4: 'PS4', ps5: 'PS5', xbox360: 'Xbox 360', xboxone: 'Xbox One', xboxelite: 'Xbox Elite', switch_pro: 'Switch Pro', generic: 'Controller', neptune: 'Steam Deck', steamcontroller_gordon: 'Steam Controller' };
+  const opts = [['', 'Import from Steam…'], ...steamLayouts.map((l) => [l.file, `${l.name} · ${names[l.controller] || l.controller} · ${new Date(l.modified).toLocaleDateString()}`])];
+  return select(opts, '', (file) => file && run(async () => {
+    const r = await api('inputImportSteam', file);
+    if (r.skipped && r.skipped.length) toast(`Imported. Not copied (OpenW plays Xbox buttons only): ${r.skipped.slice(0, 4).join(', ')}${r.skipped.length > 4 ? '…' : ''}`);
+    return r;
+  }, 'Steam layout imported as a new profile.'), 170);
+}
 
 // The OpenW Input switch. While it starts or stops it shows where it is going and does not
 // take another click, so status updates in between cannot make it bounce.

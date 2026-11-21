@@ -14,6 +14,12 @@ const mapbuild = require('./core/mapbuild');
 const { readLabels, readTexts, applyLabels } = require('./core/labels');
 const T = require('../shared/transform');
 const inputLib = require('./input');
+const steamcfg = require('./core/steamcfg');
+// Steam's folder, from the registry (as Steam writes it), or the usual place
+const steamDir = () => new Promise((resolve) => require('child_process').execFile('reg', ['query', 'HKCU\\Software\\Valve\\Steam', '/v', 'SteamPath'], { windowsHide: true }, (err, out) => {
+  const m = !err && /SteamPath\s+REG_SZ\s+(.+)/i.exec(String(out));
+  resolve(m ? path.normalize(m[1].trim()) : path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Steam'));
+}));
 
 const DEFAULTS = {
   platform: null,
@@ -512,6 +518,21 @@ const api = {
     return snapshot();
   },
   inputReopen() { input.reopen(); },
+  // Steam Input layouts on this PC, newest first, to copy into an OpenW profile
+  async inputSteamLayouts() {
+    const dir = await steamDir();
+    return steamcfg.findLayouts(dir).map(({ app: name, controller, file, modified }) => ({ name, controller, file, modified }));
+  },
+  async inputImportSteam(file) {
+    const dir = await steamDir();
+    const layout = steamcfg.findLayouts(dir).find((l) => l.file === file);
+    if (!layout) throw new Error('That Steam layout is gone.');
+    const { profile, skipped } = steamcfg.importLayout(layout.file, T, { name: `${layout.app} (Steam)`.slice(0, 40), light: steamcfg.steamLightbar(dir) });
+    const p = T.complete({ ...profile, id: Date.now().toString(36), from: 'steam' });
+    saveInput({ profiles: [...settings.get('input').profiles, p], profile: p.id });
+    if (input.running) input.configure(inputProfile());
+    return { state: snapshot(), skipped };
+  },
   inputWatch(on) { input.watch(!!on); },
   // a setting changed: saved, and the helper gets it at once
   inputSave(profile) {
@@ -645,6 +666,8 @@ app.whenReady().then(async () => {
   loadKeys();
   maps = new Maps(path.join(data, 'maps'));
   delete settings.data.steamInput; // the old Steam Input route is gone
+  // profiles from before OpenW used Steam's units are converted once
+  if (settings.get('input').profiles.some((x) => x.units !== 'steam')) saveInput({ profiles: settings.get('input').profiles.map((x) => T.complete(x)) });
   input.on('status', (st) => {
     pushInputStatus();
     if (st.running && st.pad) queueHide(hideNow); // a controller plugged in while running

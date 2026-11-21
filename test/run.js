@@ -484,33 +484,27 @@ function makeEngine(cooked, running = { value: false }) {
   const TX = require('../src/shared/transform');
   const inputLib = require('../src/main/input');
 
-  test('input: stick settings do what they say (dead zones, square diagonals, cross axes, anti-deadzone, curve)', () => {
-    const cfg = (patch) => TX.stickCfg({ ...TX.blank('t').sticks.left, ...patch });
-    const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} vs ${b}`);
-    // inside the inner dead zone nothing comes out; the edge minus the outer dead zone is full
-    assert.deepStrictEqual(TX.stick(0.05, 0.05, cfg({ inner: 10 })), [0, 0]);
-    near(TX.stick(0.95, 0, cfg({ inner: 10, outer: 5 }))[0], 1);
-    near(TX.stick(0.525, 0, cfg({ inner: 10, outer: 5 }))[0], 0.5);
-    // circle keeps a diagonal round; square takes it to the corner
-    const d = Math.SQRT1_2;
-    near(TX.stick(d, d, cfg({ inner: 0, outer: 0 }))[0], d);
-    near(TX.stick(d, d, cfg({ shape: 'square', inner: 0, outer: 0 }))[0], 1);
-    near(TX.stick(d, d, cfg({ shape: 'square', inner: 0, outer: 0 }))[1], 1);
-    // cross: a small sideways wobble on a straight push is cut, the push itself is not
-    const [cx, cy] = TX.stick(0.08, 0.9, cfg({ shape: 'cross', inner: 10, outer: 0 }));
-    assert.strictEqual(cx, 0); assert.ok(cy > 0.85);
-    // anti-deadzone: the first movement past the dead zone already gives that much
-    assert.ok(TX.stick(0.11, 0, cfg({ inner: 10, outer: 0, anti: 20 }))[0] >= 0.2);
-    // ... unless the buffer eases into it
-    assert.ok(TX.stick(0.11, 0, cfg({ inner: 10, outer: 0, anti: 20, buffer: 20 }))[0] < 0.05);
-    // relaxed curve is finer near the centre, aggressive quicker
-    assert.ok(TX.stick(0.5, 0, cfg({ inner: 0, outer: 0, curve: 'relaxed' }))[0] < 0.5);
-    assert.ok(TX.stick(0.5, 0, cfg({ inner: 0, outer: 0, curve: 'aggressive' }))[0] > 0.5);
-    // invert and single axis
-    assert.deepStrictEqual(TX.stick(0.5, 0.5, cfg({ inner: 0, outer: 0, invertY: true, axes: 'x' })).map((v) => +v.toFixed(4)), [0.5, 0]);
-    // triggers: range and hair-free curve
-    const t = TX.trigCfg({ ...TX.blank('t').triggers.left, start: 10, end: 90 });
-    assert.strictEqual(TX.trigger(0.05, t), 0); near(TX.trigger(0.5, t), 0.5); near(TX.trigger(0.95, t), 1);
+  test('input: OpenW computes what Steam Input does (points measured from the Steam client)', () => {
+    const data = JSON.parse(fs.readFileSync(path.join(__dirname, 'steam-measured.json'), 'utf8'));
+    let points = 0;
+    for (const ex of data.experiments) {
+      const c = TX.stickCfg(ex.stick);
+      for (const [x, y, ox, oy] of ex.points) {
+        const [a, b] = TX.stick(x, y, c);
+        // Steam rounds inside its maths a little differently: 5 out of 32767 is the most measured
+        assert.ok(Math.abs(a - ox) <= 5 && Math.abs(b - oy) <= 5, `${ex.name}: (${x}, ${y}) -> Steam (${ox}, ${oy}), OpenW (${a}, ${b})`);
+        points++;
+      }
+    }
+    assert.ok(data.experiments.length >= 50 && points > 1200, `${data.experiments.length} experiments, ${points} points`);
+    // Steam's curves: Relaxed is Custom 100, the custom slider switches branch after 201
+    assert.ok(Math.abs(TX.customSlope(100) - TX.CURVE_SLOPES.relaxed) < 1e-12);
+    assert.ok(TX.customSlope(201) < 1 && TX.customSlope(202) > 1);
+    // triggers: Steam's range, linear by default
+    const t = TX.trigCfg(TX.blank('t').triggers.left);
+    assert.strictEqual(TX.trigger(1000, t), 0);
+    assert.strictEqual(TX.trigger(32000, t), 32767);
+    assert.strictEqual(TX.trigger(16500, t), Math.trunc((15500 / 31000) * 32767));
   });
 
   test('input: the helper computes exactly what the page shows', () => {
@@ -520,17 +514,17 @@ function makeEngine(cooked, running = { value: false }) {
     const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
     const pick = (a) => a[Math.floor(rnd() * a.length)];
     const lines = [], expect = [];
-    for (let k = 0; k < 60; k++) {
+    for (let k = 0; k < 80; k++) {
       const p = TX.blank('t');
-      Object.assign(p.sticks.left, { shape: pick(['circle', 'cross', 'square']), inner: Math.round(rnd() * 40), outer: Math.round(rnd() * 20), curve: pick(['linear', 'aggressive', 'relaxed', 'wide', 'extrawide', 'custom']),
-        exponent: 0.3 + rnd() * 3, anti: Math.round(rnd() * 40), buffer: Math.round(rnd() * 30), scaleX: 50 + Math.round(rnd() * 150), scaleY: 50 + Math.round(rnd() * 150), invertX: rnd() < 0.3, invertY: rnd() < 0.3, axes: pick(['both', 'x', 'y']) });
-      Object.assign(p.triggers.left, { start: Math.round(rnd() * 50), end: 50 + Math.round(rnd() * 50), curve: pick(['linear', 'wide', 'custom']), exponent: 0.3 + rnd() * 3 });
+      Object.assign(p.sticks.left, { source: pick(['none', 'calibration', 'custom', 'custom']), shape: pick(['circle', 'cross', 'square']), inner: Math.round(rnd() * 12000), outer: 16000 + Math.round(rnd() * 16000),
+        curve: pick(TX.CURVE_NAMES), customCurve: 25 + Math.round(rnd() * 350), anti: pick([0, Math.round(rnd() * 12000)]), antiBuffer: pick([0, Math.round(rnd() * 6000)]),
+        scaleX: Math.round(rnd() * 100), scaleY: Math.round(rnd() * 100), invertX: rnd() < 0.3, invertY: rnd() < 0.3 });
+      Object.assign(p.triggers.left, { start: Math.round(rnd() * 12000), end: 18000 + Math.round(rnd() * 14767), curve: pick(Object.keys(TX.CURVE_SLOPES)) });
       lines.push(...TX.lines(p).filter((l) => !l.startsWith('button')));
-      // the helper gets settings rounded to 4 places, so the page's maths uses the same numbers
-      const sc = Object.fromEntries(Object.entries(TX.stickCfg(p.sticks.left)).map(([key, v]) => [key, +v.toFixed(4)]));
-      const tc = Object.fromEntries(Object.entries(TX.trigCfg(p.triggers.left)).map(([key, v]) => [key, +v.toFixed(4)]));
-      for (let j = 0; j < 20; j++) {
-        const x = +(rnd() * 2 - 1).toFixed(4), y = +(rnd() * 2 - 1).toFixed(4), tv = +rnd().toFixed(4);
+      const sc = TX.stickCfg(p.sticks.left), tc = TX.trigCfg(p.triggers.left);
+      sc.slope = +sc.slope.toFixed(6); tc.slope = +tc.slope.toFixed(6); // the helper gets 6 places
+      for (let j = 0; j < 25; j++) {
+        const x = Math.round(rnd() * 65535) - 32768, y = Math.round(rnd() * 65535) - 32768, tv = Math.round(rnd() * 32767);
         lines.push(`in 0 ${x} ${y}`, `tin 0 ${tv}`);
         expect.push(TX.stick(x, y, sc), TX.trigger(tv, tc));
       }
@@ -539,27 +533,66 @@ function makeEngine(cooked, running = { value: false }) {
     assert.strictEqual(out.length, expect.length);
     out.forEach((line, i) => {
       const got = line.split(' ').slice(1).map(Number), want = [].concat(expect[i]);
-      want.forEach((w, j) => assert.ok(Math.abs(got[j] - w) < 2e-6, `line ${i}: helper ${line}, page ${want.join(' ')}`));
+      // whole numbers on both sides; a hair's difference in float rounding may move one by 1
+      want.forEach((w, j) => assert.ok(Math.abs(got[j] - w) <= 1, `line ${i}: helper ${line}, page ${want.join(' ')}`));
     });
   }, !fs.existsSync(inputLib.EXE));
 
   test('input: profiles become the helper\'s lines, and old or pasted ones are completed', () => {
     const p = TX.blank('Test');
     p.buttons.A = { ...p.buttons.A, to: 'B', turbo: true, rate: 15, hold: 'Y', holdMs: 300 };
-    p.sticks.left.ring = { to: 'LB', at: 80, invert: true };
+    p.sticks.left.ring = { to: 'LB', radius: 24000, invert: true };
     p.light = '#ff8000';
     const l = TX.lines(p);
     assert.strictEqual(l[l.length - 1], 'apply');
     assert.strictEqual(l.filter((x) => x.startsWith('button ')).length, TX.SOURCES.length);
     assert.strictEqual(l.find((x) => x.startsWith('button 0 ')), `button 0 ${TX.OUT.B} 1 15 0 ${TX.OUT.Y} 300`);
-    assert.ok(l[0].endsWith(` 0.8 1 ${TX.OUT.LB} 0`), l[0]);
+    assert.ok(l[0].endsWith(` 24000 1 ${TX.OUT.LB} 0`), l[0]);
     assert.ok(l.includes('light 255 128 0'));
-    assert.strictEqual(l.find((x) => x.startsWith('button 15 ')).split(' ')[2], String(TX.OUT.Back), 'touchpad click is View by default');
-    const old = TX.complete({ name: 'Old', sticks: { left: { inner: 20 } } });
-    assert.strictEqual(old.sticks.left.inner, 20);
-    assert.strictEqual(old.sticks.left.shape, 'circle');
+    assert.strictEqual(l.find((x) => x.startsWith('button 15 ')).split(' ')[2], String(TX.OUT.Back), 'touchpad left half is View by default');
+    assert.strictEqual(l.find((x) => x.startsWith('button 21 ')).split(' ')[2], String(TX.OUT.Start), 'touchpad right half is Menu by default');
+    // Steam's defaults
+    assert.deepStrictEqual([p.sticks.left.source, p.sticks.left.inner, p.sticks.left.outer, p.sticks.left.shape, p.sticks.left.customCurve], ['none', 0, 28000, 'circle', 200]);
+    // a profile from before OpenW used Steam's units (percentages) is converted
+    const old = TX.complete({ name: 'Old', sticks: { left: { shape: 'square', inner: 16, outer: 8, curve: 'linear' } } });
+    assert.strictEqual(old.units, 'steam');
+    assert.strictEqual(old.sticks.left.source, 'custom');
+    assert.strictEqual(old.sticks.left.inner, Math.round(16 * 327.67));
+    assert.strictEqual(old.sticks.left.outer, Math.round(92 * 327.67));
     assert.strictEqual(old.sticks.right.output, 'right');
     assert.strictEqual(old.buttons.Guide.to, 'Guide');
+    // a Steam-unit profile is kept as it is
+    const now = TX.complete({ units: 'steam', sticks: { left: { source: 'custom', inner: 6668, outer: 25755, shape: 'square' } } });
+    assert.deepStrictEqual([now.sticks.left.inner, now.sticks.left.outer], [6668, 25755]);
+  });
+
+  test('input: a Steam layout file is imported with Steam\'s values', () => {
+    const steamcfg = require('../src/main/core/steamcfg');
+    const file = path.join(tmp, 'controller_ps4.vdf');
+    fs.writeFileSync(file, `"controller_mappings"
+{
+	"version"		"3"
+	"group" { "id" "0" "mode" "four_buttons" "inputs" { "button_a" { "activators" { "Full_Press" { "bindings" { "binding" "xinput_button A, , " } } } } "button_b" { "activators" { "Full_Press" { "bindings" { "binding" "xinput_button X, , " } "settings" { "toggle" "1" } } "Long_Press" { "bindings" { "binding" "xinput_button Y, , " } "settings" { "long_press_time" "500" } } } } } }
+	"group" { "id" "3" "mode" "joystick_move" "inputs" { "click" { "activators" { "Full_Press" { "bindings" { "binding" "xinput_button JOYSTICK_LEFT, , " } } } } }
+		"settings" { "deadzone_inner_radius" "6668" "deadzone_outer_radius" "25755" "deadzone_shape" "2" "deadzone_enable_type" "2" "curve_exponent" "5" "custom_curve_exponent" "300" } }
+	"group" { "id" "8" "mode" "joystick_move" "settings" { "output_joystick" "1" } }
+	"group" { "id" "4" "mode" "trigger" "settings" { "output_trigger" "1" } }
+	"group" { "id" "11" "mode" "single_button" "inputs" { "click" { "activators" { "Full_Press" { "bindings" { "binding" "xinput_button SELECT, , " } } } } } }
+	"group" { "id" "12" "mode" "single_button" "inputs" { "click" { "activators" { "Full_Press" { "bindings" { "binding" "key_press SPACE, , " } } } } } }
+	"preset" { "id" "0" "name" "Default" "group_source_bindings" { "0" "button_diamond active" "3" "joystick active" "8" "right_joystick active" "4" "left_trigger active" "11" "left_trackpad active" "12" "right_trackpad active" } }
+}
+`);
+    const { profile: p, skipped } = steamcfg.importLayout(file, TX, { name: 'Test', light: '#00ffff' });
+    assert.deepStrictEqual([p.sticks.left.source, p.sticks.left.inner, p.sticks.left.outer, p.sticks.left.shape, p.sticks.left.curve, p.sticks.left.customCurve], ['custom', 6668, 25755, 'square', 'custom', 300]);
+    assert.deepStrictEqual([p.sticks.right.source, p.sticks.right.outer, p.sticks.right.output], ['none', 28000, 'right']);
+    assert.strictEqual(p.triggers.left.output, 'left');
+    assert.deepStrictEqual([p.buttons.A.to, p.buttons.B.to, p.buttons.B.toggle, p.buttons.B.hold, p.buttons.B.holdMs], ['A', 'X', true, 'Y', 500]);
+    assert.strictEqual(p.buttons.LS.to, 'LS');
+    assert.strictEqual(p.buttons.Touchpad.to, 'Back');
+    assert.strictEqual(p.buttons.TouchpadRight.to, '', 'a keyboard binding has no Xbox button');
+    assert.ok(skipped.some((x) => /key_press/.test(x)));
+    assert.strictEqual(p.light, '#00ffff');
+    assert.strictEqual(TX.complete(p).sticks.left.inner, 6668, 'kept in Steam units');
   });
 
   test('input: the helper\'s messages are understood', () => {

@@ -286,7 +286,8 @@ main { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-heigh
 .ctl .opt-row { min-height: 34px; }
 .ctl .lbl { width: 210px; flex: none; }
 .ctl .lbl.grow { width: auto; flex: 1; min-width: 0; }
-.ctl .val { width: 48px; text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
+.ctl .sub { margin-top: 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ctl .val { width: 52px; text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
 .ctl canvas { align-self: center; display: block; }
 .stickmap { cursor: crosshair; touch-action: none; }
 .mono { font-variant-numeric: tabular-nums; text-align: center; min-height: 16px; }

@@ -57,19 +57,21 @@ static void say(const char* fmt, ...) {
 
 /* ---------------- settings ---------------- */
 
+// Steam Input's settings, in Steam's units (sticks and triggers from 0 to 32767).
 struct StickCfg {
-  int shape = 0;            // 0 circle, 1 cross (each axis on its own), 2 square (full diagonals)
-  double inner = 0.08, outer = 0.02, expo = 1, anti = 0, buffer = 0, scaleX = 1, scaleY = 1;
+  int source = 0;           // dead zone source: 0 none, 1 calibration, 2 custom
+  int shape = 1;            // 0 cross, 1 circle, 2 square
+  double inner = 0, outer = 28000, slope = 1, anti = 0, buffer = 0; // slope: the response curve's slope at the centre
+  double scaleX = 1, scaleY = 1;
   int invX = 0, invY = 0;
   int output = 0;           // 0 left stick, 1 right stick, 2 nothing
-  int axes = 0;             // 0 both, 1 horizontal only, 2 vertical only
-  double ringAt = 0.9; int ringInvert = 0; uint32_t ringMask = 0; // outer ring binding
-  double smoothing = 0;     // 0..1
+  double ringRadius = 25000; int ringInvert = 0; uint32_t ringMask = 0; // outer ring command
+  double smoothing = 0;     // 0..1 (OpenW's own)
 };
-struct TrigCfg { double start = 0, end = 1, expo = 1; int hair = 0; int output = 0; /* 0 left 1 right 2 none */ };
+struct TrigCfg { double start = 1000, end = 32000, slope = 1; int hair = 0; int output = 0; /* 0 left 1 right 2 none */ };
 struct BtnCfg { uint32_t to = 0; int turbo = 0; double turboHz = 10; int toggle = 0; uint32_t hold = 0; int holdMs = 0; };
 
-enum { SRC_COUNT = 21 };
+enum { SRC_COUNT = 22 };
 struct Config {
   StickCfg stick[2];
   TrigCfg trig[2];
@@ -78,14 +80,15 @@ struct Config {
   int lightR = -1, lightG = 0, lightB = 0;
   Config() {
     stick[1].output = 1; trig[1].output = 1;
-    // A B X Y LB RB LS RS Back Start Guide Up Down Left Right Touchpad Mute FnL FnR PaddleL PaddleR
+    // A B X Y LB RB LS RS Back Start Guide Up Down Left Right Touchpad(left half) Mute FnL FnR PaddleL PaddleR TouchpadRight
     static const uint32_t def[SRC_COUNT] = { 0x1000, 0x2000, 0x4000, 0x8000, 0x100, 0x200, 0x40, 0x80, 0x20, 0x10, 0x400,
-      0x1, 0x2, 0x4, 0x8, 0x20, 0, 0, 0, 0, 0 };
+      0x1, 0x2, 0x4, 0x8, 0x20, 0, 0, 0, 0, 0, 0x10 };
     for (int i = 0; i < SRC_COUNT; i++) btn[i].to = def[i];
   }
 };
 
 static const uint32_t OUT_LT = 0x10000, OUT_RT = 0x20000; // "full trigger" outputs for buttons
+static const double M = 32767;
 
 // One settings line; returns false if it is not one.
 static bool parseLine(const std::string& line, Config& c) {
@@ -94,17 +97,17 @@ static bool parseLine(const std::string& line, Config& c) {
   if (cmd == "stick") {
     int i; in >> i; if (i < 0 || i > 1) return true;
     StickCfg& s = c.stick[i];
-    in >> s.shape >> s.inner >> s.outer >> s.expo >> s.anti >> s.buffer >> s.scaleX >> s.scaleY >> s.invX >> s.invY
-       >> s.output >> s.axes >> s.ringAt >> s.ringInvert >> s.ringMask >> s.smoothing;
-    s.inner = std::clamp(s.inner, 0.0, 0.9); s.outer = std::clamp(s.outer, 0.0, 0.5);
-    s.expo = std::clamp(s.expo, 0.1, 10.0); s.anti = std::clamp(s.anti, 0.0, 0.9); s.buffer = std::clamp(s.buffer, 0.0, 0.5);
+    in >> s.source >> s.shape >> s.inner >> s.outer >> s.slope >> s.anti >> s.buffer >> s.scaleX >> s.scaleY >> s.invX >> s.invY
+       >> s.output >> s.ringRadius >> s.ringInvert >> s.ringMask >> s.smoothing;
+    s.inner = std::clamp(s.inner, 0.0, 32000.0); s.outer = std::clamp(s.outer, 0.0, 32000.0);
+    s.slope = std::clamp(s.slope, 1e-6, 1e9); s.anti = std::clamp(s.anti, 0.0, M); s.buffer = std::clamp(s.buffer, 0.0, M);
     return true;
   }
   if (cmd == "trigger") {
     int i; in >> i; if (i < 0 || i > 1) return true;
     TrigCfg& t = c.trig[i];
-    in >> t.start >> t.end >> t.expo >> t.hair >> t.output;
-    t.start = std::clamp(t.start, 0.0, 0.95); t.end = std::clamp(t.end, t.start + 0.01, 1.0); t.expo = std::clamp(t.expo, 0.1, 10.0);
+    in >> t.start >> t.end >> t.slope >> t.hair >> t.output;
+    t.start = std::clamp(t.start, 0.0, M); t.end = std::clamp(t.end, 0.0, M); t.slope = std::clamp(t.slope, 1e-6, 1e9);
     return true;
   }
   if (cmd == "button") {
@@ -119,58 +122,70 @@ static bool parseLine(const std::string& line, Config& c) {
   return false;
 }
 
-/* ---------------- the transform (src/shared/transform.js does the same; the tests compare them) ---------------- */
+/* ---------------- the transform: Steam Input's, measured from the Steam client ----------------
+   src/shared/transform.js does the same; the tests compare the two, and both with points
+   measured from Steam (test/steam-measured.json, docs/steam-input.md). */
 
-static double clamp01(double v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 static double sgn(double v) { return v < 0 ? -1 : v > 0 ? 1 : 0; }
-
-// Magnitude past the dead zone -> output magnitude: dead zones, response curve, anti-deadzone.
-static double shapeMag(double m, const StickCfg& c) {
-  if (m <= c.inner) return 0;
-  double span = std::max(0.01, 1 - c.outer - c.inner);
-  double t = pow(clamp01((m - c.inner) / span), c.expo);
-  if (c.anti > 0 && t > 0) {
-    if (c.buffer > 0 && t < c.buffer) t = t / c.buffer * c.anti;
-    else t = c.anti + (1 - c.anti) * (t - c.buffer) / (1 - c.buffer);
-  }
-  return clamp01(t);
-}
+static double lin(double m, double i, double o) { return o > i ? std::clamp((m - i) / (o - i), 0.0, 1.0) : (m > i ? 1.0 : 0.0); }
+// Steam's response curves: s*r / (1 + (s-1)*r), s the slope at the centre
+static double bend(double r, double k) { return r > 0 ? k * r / (1 + (k - 1) * r) : 0; }
 
 static void stickXform(double x, double y, const StickCfg& c, double& ox, double& oy) {
-  if (c.shape == 1) {
-    ox = sgn(x) * shapeMag(fabs(x), c);
-    oy = sgn(y) * shapeMag(fabs(y), c);
-  } else {
-    double m = sqrt(x * x + y * y);
-    if (m < 1e-9) { ox = oy = 0; }
+  const double k = c.slope;
+  if (c.source == 0 || (c.inner == 0 && c.outer >= 32000)) {
+    // no dead zone: only the curve, on the round distance
+    if (k == 1) { ox = x; oy = y; }
     else {
-      double t = shapeMag(m, c);
-      // square: the direction is stretched from the circle onto the square, so a diagonal reaches full on both axes
-      double d = c.shape == 2 ? std::max(fabs(x), fabs(y)) : m;
-      ox = x / d * t; oy = y / d * t;
+      double m = std::hypot(x, y);
+      if (m == 0) { ox = oy = 0; return; }
+      double f = bend(std::min(m / M, 1.0), k) * M / m;
+      ox = x * f; oy = y * f;
+    }
+  } else {
+    auto anti = [&](double v) { return (v == 0 || (c.buffer > 0 && v < c.buffer)) ? 0.0 : (c.anti > 0 ? c.anti + v * (1 - c.anti / M) : v); };
+    if (c.shape == 1) { // circle: on the round distance
+      double m = std::hypot(x, y);
+      if (m == 0) { ox = oy = 0; return; }
+      double m2 = anti(m);
+      double t = lin(k == 1 ? m2 : bend(std::min(m2 / M, 1.0), k) * M, c.inner, c.outer);
+      ox = x / m * t * M; oy = y / m * t * M;
+    } else {            // cross and square: anti-deadzone and dead zone per axis, the curve on the round distance
+      double vx = sgn(x) * anti(fabs(x)), vy = sgn(y) * anti(fabs(y));
+      double m = std::hypot(vx, vy);
+      if (m > 0 && k != 1) { double f = bend(std::min(m / M, 1.0), k) * M / m; vx *= f; vy *= f; }
+      double ax = lin(fabs(vx), c.inner, c.outer), ay = lin(fabs(vy), c.inner, c.outer);
+      if (c.shape == 0) { ox = sgn(x) * ax * M; oy = sgn(y) * ay * M; }
+      else {            // square: the length on the larger axis, the angle along the square's edge
+        double L = std::hypot(ax, ay);
+        if (L == 0) { ox = oy = 0; return; }
+        double frac = atan2(std::min(ax, ay), std::max(ax, ay)) / (3.14159265358979323846 / 4);
+        double bx = ax >= ay ? L : L * frac, by = ax >= ay ? L * frac : L;
+        ox = sgn(x) * bx * M; oy = sgn(y) * by * M;
+      }
     }
   }
   ox *= c.scaleX; oy *= c.scaleY;
   if (c.invX) ox = -ox;
   if (c.invY) oy = -oy;
-  if (c.axes == 1) oy = 0; else if (c.axes == 2) ox = 0;
-  ox = std::clamp(ox, -1.0, 1.0); oy = std::clamp(oy, -1.0, 1.0);
+  ox = std::trunc(std::clamp(ox, -M, M)); oy = std::trunc(std::clamp(oy, -M, M));
 }
 
+// A trigger, 0..32767 in and out.
 static double trigXform(double t, const TrigCfg& c) {
-  double v = clamp01((t - c.start) / std::max(0.01, c.end - c.start));
-  return v <= 0 ? 0 : pow(v, c.expo);
+  double v = c.slope == 1 ? t : bend(std::min(t / M, 1.0), c.slope) * M;
+  return std::trunc(lin(v, c.start, c.end) * M);
 }
 
 static int transformMode() {
   Config c; std::string line;
-  char buf[256];
+  char buf[512];
   while (fgets(buf, sizeof buf, stdin)) {
     line = buf;
     while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
     std::istringstream in(line); std::string cmd; in >> cmd;
-    if (cmd == "in") { int i; double x, y, ox, oy; in >> i >> x >> y; stickXform(x, y, c.stick[i & 1], ox, oy); printf("out %.6f %.6f\n", ox, oy); }
-    else if (cmd == "tin") { int i; double t; in >> i >> t; printf("tout %.6f\n", trigXform(t, c.trig[i & 1])); }
+    if (cmd == "in") { int i; double x, y, ox, oy; in >> i >> x >> y; stickXform(x, y, c.stick[i & 1], ox, oy); printf("out %.0f %.0f\n", ox, oy); }
+    else if (cmd == "tin") { int i; double t; in >> i >> t; printf("tout %.0f\n", trigXform(t, c.trig[i & 1])); }
     else parseLine(line, c);
     fflush(stdout);
   }
@@ -210,7 +225,7 @@ static ULONG vigemSerial = 0;
 static std::atomic<int> vigemIndex{ -1 }; // XInput slot of the virtual pad, so it is never read as the real one
 static HANDLE submitEvent = nullptr;
 
-static bool openVigem() {
+static bool openVigem(ULONG targetType = 0, USHORT vid = 0x045E, USHORT pid = 0x028E) {
   HDEVINFO di = SetupDiGetClassDevsW(&VIGEM_BUS, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
   if (di == INVALID_HANDLE_VALUE) return false;
   SP_DEVICE_INTERFACE_DATA ifd = { sizeof ifd };
@@ -232,13 +247,13 @@ static bool openVigem() {
   if (vigem == INVALID_HANDLE_VALUE) { CloseHandle(ev); return false; }
   // the bus hands out serial numbers: take the first free one
   for (ULONG serial = 1; serial <= 16 && !vigemSerial; serial++) {
-    VPlugin p = { sizeof p, serial, 0 /* Xbox 360 wired */, 0x045E, 0x028E };
+    VPlugin p = { sizeof p, serial, targetType /* 0 Xbox 360, 2 DualShock 4 */, vid, pid };
     if (busIo(vigem, ev, IOCTL_PLUGIN, &p, sizeof p, nullptr, 0)) vigemSerial = serial;
   }
   if (!vigemSerial) { CloseHandle(ev); CloseHandle(vigem); vigem = INVALID_HANDLE_VALUE; return false; }
   VSerial ready = { sizeof ready, vigemSerial };
   busIo(vigem, ev, IOCTL_WAIT_READY, &ready, sizeof ready, nullptr, 0); // older buses do not know it: fine
-  for (int tries = 0; tries < 40; tries++) {
+  for (int tries = 0; tries < 40 && targetType == 0; tries++) {
     XUserIndex ui = { sizeof ui, vigemSerial, 0 };
     if (busIo(vigem, ev, IOCTL_XUSB_USER_INDEX, &ui, sizeof ui, &ui, sizeof ui)) { vigemIndex = (int)ui.UserIndex; break; }
     Sleep(50);
@@ -258,6 +273,7 @@ static void submit(const XReport& r) {
 
 /* ---------------- the real controller ---------------- */
 
+// Sticks from -32768 to 32767 (up and right positive) and triggers from 0 to 32767: Steam's units.
 struct Raw { double lx = 0, ly = 0, rx = 0, ry = 0, lt = 0, rt = 0; uint32_t buttons = 0; };
 enum Kind { NONE, XINPUT, DS4, DUALSENSE, EDGE };
 static const char* KIND_NAME[] = { "none", "xinput", "ds4", "dualsense", "edge" };
@@ -302,7 +318,7 @@ static void step(const Raw& raw) {
     int o = std::clamp(s.output, 0, 2);
     outX[o] += ox; outY[o] += oy;
     if (s.ringMask) {
-      bool past = sqrt(sx[i] * sx[i] + sy[i] * sy[i]) > s.ringAt;
+      bool past = std::hypot(sx[i], sy[i]) > s.ringRadius;
       if (past != (s.ringInvert != 0)) mask |= s.ringMask;
     }
   }
@@ -313,9 +329,9 @@ static void step(const Raw& raw) {
     if (t.hair) {
       // full as soon as it moves down, off as soon as it moves back up
       Hair& hs = hair[i]; double x = tin[i];
-      if (!hs.on) { if (x > t.start && x > hs.ref + 0.03) { hs.on = true; hs.ref = x; } else hs.ref = std::min(hs.ref, x); }
-      else { if (x > hs.ref) hs.ref = x; else if (x < hs.ref - 0.03 || x <= t.start) { hs.on = false; hs.ref = x; } }
-      v = hs.on ? 1 : 0;
+      if (!hs.on) { if (x > t.start && x > hs.ref + 1000) { hs.on = true; hs.ref = x; } else hs.ref = std::min(hs.ref, x); }
+      else { if (x > hs.ref) hs.ref = x; else if (x < hs.ref - 1000 || x <= t.start) { hs.on = false; hs.ref = x; } }
+      v = hs.on ? M : 0;
     } else v = trigXform(tin[i], t);
     tout[std::clamp(t.output, 0, 2)] += v;
   }
@@ -343,8 +359,8 @@ static void step(const Raw& raw) {
   }
   XReport r = {};
   r.wButtons = (USHORT)(mask & 0xFFFF);
-  auto axis = [](double v) { return (SHORT)lround(std::clamp(v, -1.0, 1.0) * 32767); };
-  auto trig = [](double v) { return (BYTE)lround(clamp01(v) * 255); };
+  auto axis = [](double v) { return (SHORT)std::clamp(v, -M, M); };
+  auto trig = [](double v) { return (BYTE)lround(std::clamp(v, 0.0, M) * 255 / M); };
   r.sThumbLX = axis(outX[0]); r.sThumbLY = axis(outY[0]); r.sThumbRX = axis(outX[1]); r.sThumbRY = axis(outY[1]);
   r.bLeftTrigger = (mask & OUT_LT) ? 255 : trig(tout[0]);
   r.bRightTrigger = (mask & OUT_RT) ? 255 : trig(tout[1]);
@@ -413,7 +429,10 @@ static void hat(int v, uint32_t& b) {
   static const uint32_t dirs[8] = { 1, 1 | 8, 8, 2 | 8, 2, 2 | 4, 4, 1 | 4 }; // up right down left as bits 0..3
   if (v < 8) { uint32_t d = dirs[v]; if (d & 1) b |= 1u << 11; if (d & 2) b |= 1u << 12; if (d & 4) b |= 1u << 13; if (d & 8) b |= 1u << 14; }
 }
-static double stickByte(BYTE v) { return std::clamp((v - 127.5) / 127.5, -1.0, 1.0); }
+// a stick byte as Steam reads it: 257 per step, from -32768 to 32767 (measured from Steam)
+static double stickX(BYTE v) { return 257.0 * v - 32768; }
+static double stickY(BYTE v) { return 32767 - 257.0 * v; }
+static double trigByte(BYTE v) { return v * M / 255; }
 
 // Face and shoulder bytes, the same on DualShock 4 and DualSense.
 static void psButtons(BYTE b0, BYTE b1, BYTE b2, uint32_t& b) {
@@ -428,28 +447,34 @@ static void psButtons(BYTE b0, BYTE b1, BYTE b2, uint32_t& b) {
   if (b2 & 0x01) b |= 1u << 10; if (b2 & 0x02) b |= 1u << 15;
 }
 
+// The first finger on the touchpad: x from 0 (left) to 1919 (right), or -1.
+static int touchX(const BYTE* t) { return (t[0] & 0x80) ? -1 : (t[1] | ((t[2] & 0x0F) << 8)); }
+
 static bool parseReport(Kind kind, bool usbLayout, const BYTE* d, DWORD n, Raw& r) {
-  int o; BYTE b0, b1, b2, l2, r2;
+  int o, tx = -1; BYTE b0, b1, b2, l2, r2;
   if (kind == DS4) {
     if (d[0] == 0x01 && n >= 10) o = 1; else if (d[0] == 0x11 && n >= 12) o = 3; else return false;
-    r.lx = stickByte(d[o]); r.ly = -stickByte(d[o + 1]); r.rx = stickByte(d[o + 2]); r.ry = -stickByte(d[o + 3]);
+    r.lx = stickX(d[o]); r.ly = stickY(d[o + 1]); r.rx = stickX(d[o + 2]); r.ry = stickY(d[o + 3]);
     b0 = d[o + 4]; b1 = d[o + 5]; b2 = d[o + 6]; l2 = d[o + 7]; r2 = d[o + 8];
+    if (n >= (DWORD)o + 37) tx = touchX(d + o + 34);
   } else {
     if (d[0] == 0x01 && !usbLayout && n >= 10) { // Bluetooth before the full reports start
-      r.lx = stickByte(d[1]); r.ly = -stickByte(d[2]); r.rx = stickByte(d[3]); r.ry = -stickByte(d[4]);
+      r.lx = stickX(d[1]); r.ly = stickY(d[2]); r.rx = stickX(d[3]); r.ry = stickY(d[4]);
       b0 = d[5]; b1 = d[6]; b2 = d[7]; l2 = d[8]; r2 = d[9];
     } else {
       if (d[0] == 0x01 && n >= 11) o = 1; else if (d[0] == 0x31 && n >= 12) o = 2; else return false;
-      r.lx = stickByte(d[o]); r.ly = -stickByte(d[o + 1]); r.rx = stickByte(d[o + 2]); r.ry = -stickByte(d[o + 3]);
+      r.lx = stickX(d[o]); r.ly = stickY(d[o + 1]); r.rx = stickX(d[o + 2]); r.ry = stickY(d[o + 3]);
       l2 = d[o + 4]; r2 = d[o + 5]; b0 = d[o + 7]; b1 = d[o + 8]; b2 = d[o + 9];
+      if (n >= (DWORD)o + 35) tx = touchX(d + o + 32);
     }
   }
-  r.lt = l2 / 255.0; r.rt = r2 / 255.0;
+  r.lt = trigByte(l2); r.rt = trigByte(r2);
   uint32_t b = 0; psButtons(b0, b1, b2, b);
   if (kind != DS4) {
     if (b2 & 0x04) b |= 1u << 16;                     // mute
     if (kind == EDGE) { if (b2 & 0x10) b |= 1u << 17; if (b2 & 0x20) b |= 1u << 18; if (b2 & 0x40) b |= 1u << 19; if (b2 & 0x80) b |= 1u << 20; }
   }
+  if ((b & (1u << 15)) && tx >= 960) b = (b & ~(1u << 15)) | (1u << 21); // right half
   r.buttons = b;
   return true;
 }
@@ -563,9 +588,8 @@ static bool runXInput() {
     if (xGet(slot, &s) != ERROR_SUCCESS) break;
     const XINPUT_GAMEPAD& g = s.Gamepad;
     Raw r;
-    r.lx = std::max(-1.0, g.sThumbLX / 32767.0); r.ly = std::max(-1.0, g.sThumbLY / 32767.0);
-    r.rx = std::max(-1.0, g.sThumbRX / 32767.0); r.ry = std::max(-1.0, g.sThumbRY / 32767.0);
-    r.lt = g.bLeftTrigger / 255.0; r.rt = g.bRightTrigger / 255.0;
+    r.lx = g.sThumbLX; r.ly = g.sThumbLY; r.rx = g.sThumbRX; r.ry = g.sThumbRY;
+    r.lt = trigByte(g.bLeftTrigger); r.rt = trigByte(g.bRightTrigger);
     r.buttons = xButtons(g.wButtons);
     step(r); // every millisecond, so turbo and long presses keep time
     if (timer) { LARGE_INTEGER due; due.QuadPart = -10000; SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE); WaitForSingleObject(timer, 5); }
@@ -598,8 +622,8 @@ static void watchThread() {
     if (!watching) continue;
     Raw r; XReport o;
     { std::lock_guard<std::mutex> g(stepLock); r = shownRaw; o = shownOut; }
-    say("state %.3f %.3f %.3f %.3f %.3f %.3f %u %.3f %.3f %.3f %.3f %.3f %.3f %u", r.lx, r.ly, r.rx, r.ry, r.lt, r.rt, r.buttons,
-      o.sThumbLX / 32767.0, o.sThumbLY / 32767.0, o.sThumbRX / 32767.0, o.sThumbRY / 32767.0, o.bLeftTrigger / 255.0, o.bRightTrigger / 255.0, (unsigned)o.wButtons
+    say("state %.0f %.0f %.0f %.0f %.0f %.0f %u %d %d %d %d %d %d %u", r.lx, r.ly, r.rx, r.ry, r.lt, r.rt, r.buttons,
+      (int)o.sThumbLX, (int)o.sThumbLY, (int)o.sThumbRX, (int)o.sThumbRY, (int)lround(o.bLeftTrigger * M / 255), (int)lround(o.bRightTrigger * M / 255), (unsigned)o.wButtons
       | (o.bLeftTrigger == 255 ? OUT_LT : 0) | (o.bRightTrigger == 255 ? OUT_RT : 0));
   }
 }
@@ -625,7 +649,32 @@ static void inputThread() {
   quitting = true; // OpenW closed or asked: let go of everything
 }
 
+/* ---------- --vds4: a virtual DualShock 4 playing exact positions (for measuring Steam Input) ---------- */
+
+static const DWORD IOCTL_DS4_SUBMIT = BUS_IOCTL(0xA03, FILE_WRITE_DATA);
+struct Ds4Report { BYTE lx, ly, rx, ry; USHORT buttons; BYTE special, l2, r2; };
+struct Ds4Submit { ULONG Size, SerialNo; Ds4Report Report; };
+
+// stdin: "s lx ly rx ry l2 r2 buttons special" (bytes, as a DS4 reports them; buttons as in
+// ViGEm's DS4_BUTTONS with the hat in the low 4 bits, 8 = centred); "quit" ends it.
+static int vds4Mode() {
+  if (!openVigem(2, 0x054C, 0x05C4)) { say("vigem missing"); return 1; }
+  say("vds4 ok %lu", vigemSerial);
+  HANDLE ev = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  char buf[256];
+  while (fgets(buf, sizeof buf, stdin)) {
+    if (!strncmp(buf, "quit", 4)) break;
+    unsigned lx, ly, rx, ry, l2, r2, b, sp;
+    if (sscanf(buf, "s %u %u %u %u %u %u %u %u", &lx, &ly, &rx, &ry, &l2, &r2, &b, &sp) != 8) continue;
+    Ds4Submit r = { sizeof r, vigemSerial, { (BYTE)lx, (BYTE)ly, (BYTE)rx, (BYTE)ry, (USHORT)b, (BYTE)sp, (BYTE)l2, (BYTE)r2 } };
+    say(busIo(vigem, ev, IOCTL_DS4_SUBMIT, &r, sizeof r, nullptr, 0) ? "ok" : "fail %lu", GetLastError());
+  }
+  CloseHandle(vigem);
+  return 0;
+}
+
 int main(int argc, char** argv) {
+  if (argc > 1 && !strcmp(argv[1], "--vds4")) return vds4Mode();
   if (argc > 1 && !strcmp(argv[1], "--transform")) return transformMode();
   for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--own")) wantOwn = true;
   HANDLE once = CreateMutexW(nullptr, TRUE, L"Local\\OpenWInput");
