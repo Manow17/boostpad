@@ -50,14 +50,17 @@ const NOT_STANDARD = /^(labs_|hoops|shattershot|throwbackhockey|ko_|street_p$|wa
  * cache: { "<file>": { size, parts: [...] } }, updated in place (reading a map header is slow).
  * names: arena file (lower case) -> name the game shows, from the game's own text (labels.js).
  */
-function scanArenas(cookedDir, cache = {}, extraKeys = [], names = new Map()) {
+// resolve(file): where to read a game file from; Boostpad's backup for a file it has changed, so a
+// merged arena is still scanned as the game shipped it.
+function scanArenas(cookedDir, cache = {}, extraKeys = [], names = new Map(), resolve = null) {
+  const where = (f) => (resolve ? resolve(f) : path.join(cookedDir, f));
   const files = fs.readdirSync(cookedDir).filter((f) => /\.upk$/i.test(f) && !/_SF\.upk$/i.test(f));
   const byLower = new Map(files.map((f) => [f.replace(/\.upk$/i, '').toLowerCase(), f]));
   const isMap = (f) => /_P\.upk$/i.test(f) && !/^BG_|_Art_|_VFX_P|_OOB_P|MapImage/i.test(f);
   const arenas = [];
   for (const file of files.filter(isMap)) {
     const base = file.replace(/\.upk$/i, '');
-    const size = fs.statSync(path.join(cookedDir, file)).size;
+    const size = fs.statSync(where(file)).size;
     let entry = cache[file];
     if (!entry || entry.size !== size) {
       let parts = [];
@@ -65,7 +68,7 @@ function scanArenas(cookedDir, cache = {}, extraKeys = [], names = new Map()) {
         // a part is another package this map names that belongs to the same arena family
         // ("Mall_Day_P" loads "Mall_Field") and is not an arena map itself
         const family = `${base.split('_')[0].toLowerCase()}_`;
-        parts = [...new Set(upk.readNamesFile(path.join(cookedDir, file), extraKeys).map((n) => n.toLowerCase()))]
+        parts = [...new Set(upk.readNamesFile(where(file), extraKeys).map((n) => n.toLowerCase()))]
           .filter((n) => n !== base.toLowerCase() && n.startsWith(family) && byLower.has(n) && !isMap(byLower.get(n)))
           .map((n) => byLower.get(n));
       } catch { /* unreadable map: listed without parts */ }
@@ -104,22 +107,25 @@ function outsideParts(arena) {
 }
 
 /**
- * The stadium of `stadium` in the surroundings of `place`, strictly: nothing of the stadium
- * arena's outside shows, and nothing of the place arena's stadium. Built at the object level
- * (mapbuild.js): every piece of both maps is sorted into stadium or outside, and each side
- * keeps only its own.
+ * The stadium of `stadium` in `place`: place stays exactly as it is (its sky, lights, fog,
+ * surroundings, sounds, effects and gameplay) and only its stadium is exchanged. Built at the
+ * object level (mapbuild.js), where every placed piece is sorted into stadium or outside.
  *
- * Two shapes, depending on which arena has part files to point elsewhere ("slots"):
- *   A  the stadium arena has parts. Place's main file becomes the stadium arena's map with
- *      its gameplay and only its stadium. Its outside parts (and, when more room is needed,
- *      its sound parts) are pointed at new files: place's map and outside parts with only
- *      their outside. A stadium-arena part that holds some of its stadium (Champions Field's
- *      upper ring is in CS_OOB2) keeps only that stadium; its stadium file loads as it is.
- *   B  the stadium arena is one file with no parts (Mannfield). Place's main file keeps its
- *      own gameplay and only its outside; its stadium file (or a sound part) is pointed at
- *      a new file: the stadium arena's map with only its stadium.
- * info (optional, from reading the maps): { stadiumRegion, placeRegion, free: Set of stadium-arena
- * part files that hold none of its stadium }. Without it, a best guess is planned for display.
+ *   - Place's main file keeps everything except its stadium pieces (and anything standing
+ *     where the new stadium goes).
+ *   - Place's part files: its stadium file, and its sound parts if more room is needed
+ *     ("slots"), are pointed at new files holding the stadium arena's stadium pieces: its
+ *     stadium file, its main map, and any part that holds some of its stadium, each with
+ *     only the stadium kept (no gameplay, lights, sky or fog). A stadium file of place's that
+ *     is not needed loads empty. Place's outside parts load as filtered copies (their own
+ *     stadium pieces out); its effects and lights parts load as they are.
+ *   - A place arena with no stadium file and no sound part has no slot. Then the stadium
+ *     arena's map is the base instead (its gameplay and stadium) and place's map and outside
+ *     parts load in its part files, place's main map first so its sky comes along; the
+ *     lighting and fog are then the stadium arena's.
+ * info (optional, from reading the maps): { stadiumRegion, placeRegion, stadiumHolders: Set of
+ * stadium-arena files with stadium pieces, placeHolders: Set of place part files with stadium
+ * pieces }. Without it, a best guess is planned for display.
  * Standard soccar arenas only: the pitch shape comes with the stadium.
  * Returns { how: 'build', ops, play, note } or { how: 'none', reason }.
  */
@@ -131,81 +137,93 @@ function mergePlan(stadium, place, all = [], info = null) {
   const label = `${stadium.name} stadium in ${place.name}`;
   const group = `merge:${stadium.id}:${place.id}`;
   const sRegion = (info && info.stadiumRegion) || null, pRegion = (info && info.placeRegion) || null;
-  const base = { kind: 'build', category: 'map', group, label };
-  const stadiumSide = (from, extra = {}) => ({ ...base, from, side: 'stadium', region: sRegion, clear: [], gameplay: false, ...extra });
-  const outsideSide = (from, extra = {}) => ({ ...base, from, side: 'surroundings', region: pRegion, clear: sRegion || [], gameplay: false, ...extra });
+  const holds = (set, file, guess) => (info ? set.has(file.toLowerCase()) : guess);
   const name = (p) => p.file.replace(/\.upk$/i, '');
   const newFile = (i, slot) => `${mapbuildName(`${stadium.id}>${place.id}:${i}`, name(slot).length)}.upk`;
-  const ops = [];
-  const renames = {};
-  let note = '';
+  const base = { kind: 'build', category: 'map', group, label };
+  // the stadium arena's stadium pieces, from one of its files
+  const stadiumOf = (from, extra = {}) => ({ ...base, from, side: 'stadium', region: sRegion, clear: [], gameplay: false, lights: false, part: from !== stadium.file, ...extra });
+  // place's outside, from one of its files
+  const outsideOf = (from, extra = {}) => ({ ...base, from, side: 'surroundings', region: pRegion, clear: sRegion || [], gameplay: false, lights: true, part: from !== place.file, ...extra });
 
-  const sParts = stadium.parts.filter((p) => p.kind !== 'field' && p.kind !== 'lights');
-  if (sParts.length) {
-    // A: the stadium arena's map is the base
-    // without reading the maps: a one-file arena's outside parts and any effects part hold none of its stadium
-    const isFree = (p) => (info ? info.free.has(p.file.toLowerCase()) : !stadium.field || p.kind === 'effects');
-    const outsideSlots = sParts.filter((p) => p.kind !== 'audio');
-    const freeSlots = [...outsideSlots.filter(isFree), ...sParts.filter((p) => p.kind === 'audio')];
-    // the place arena's outside, most first: a one-file arena keeps it in its main file, a newer one in its outside parts
-    const outsideFiles = place.parts.filter((p) => p.kind === 'surroundings').map((p) => p.file);
-    const partFiles = new Set(place.parts.map((p) => p.file));
-    const sources = [...(place.field ? [...outsideFiles, place.file] : [place.file, ...outsideFiles]),
-      ...place.parts.filter((p) => p.kind === 'effects').map((p) => p.file)];
+  // where the stadium arena's stadium is: its stadium file first (newer arenas keep the stands
+  // there), its main map, and parts that hold some of it (Champions Field's upper ring is in CS_OOB2)
+  const sources = [
+    ...(stadium.field ? [stadium.field] : []),
+    ...(holds(info && info.stadiumHolders, stadium.file, true) ? [stadium.file] : []),
+    ...stadium.parts.filter((p) => p.kind === 'surroundings' && holds(info && info.stadiumHolders, p.file, false)).map((p) => p.file),
+  ];
+  const pParts = place.parts;
+  const slots = [...pParts.filter((p) => p.kind === 'field'), ...pParts.filter((p) => p.kind === 'audio')];
+
+  if (slots.length) {
+    const ops = [];
+    const renames = {};
     const assigned = new Map();
-    freeSlots.forEach((slot, i) => { if (sources[i]) assigned.set(slot, sources[i]); });
-    sParts.forEach((slot, i) => {
-      const source = assigned.get(slot);
-      if (!source && slot.kind === 'audio') return; // a sound part with nothing to put there stays
-      const file = newFile(i, slot);
-      renames[name(slot)] = file.replace(/\.upk$/i, '');
-      // nothing of the stadium arena's outside may load: a part not used for the place's outside keeps only
-      // its stadium, or loads nothing when it holds none of it
-      ops.push(source ? outsideSide(source, { gameFile: file, create: true, part: partFiles.has(source) })
-        : isFree(slot) ? stadiumSide(slot.file, { gameFile: file, create: true, side: 'empty' })
-          : stadiumSide(slot.file, { gameFile: file, create: true, part: true }));
-    });
-    const missing = sources.length - assigned.size;
-    if (!assigned.size) return { how: 'none', reason: `${stadium.name} has no part file the outside of ${place.name} can be loaded in.` };
-    ops.push(stadiumSide(stadium.file, { gameFile: place.file, gameplay: true, renames }));
-    const quiet = [...assigned.keys()].filter((s) => s.kind === 'audio');
-    note = [quiet.length ? `${stadium.name}’s background sounds make room for it, so they are quiet.` : '',
-      missing > 0 ? `${missing === 1 ? 'One part' : `${missing} parts`} of ${place.name}’s surroundings did not fit and are left out.` : ''].filter(Boolean).join(' ');
-  } else {
-    // B: the place arena's map is the base, keeping only its outside
-    const pParts = place.parts.filter((p) => p.kind !== 'lights');
-    const slot = pParts.find((p) => p.kind === 'field') || pParts.find((p) => p.kind === 'audio') || pParts.find((p) => p.kind === 'effects');
-    if (!slot) return { how: 'none', reason: `${stadium.name} and ${place.name} are each one file with no parts, so there is nowhere to load one into the other.` };
+    slots.forEach((slot, i) => { if (sources[i]) assigned.set(slot, sources[i]); });
     pParts.forEach((p, i) => {
-      if (p.kind === 'audio' && p !== slot) return;
+      const source = assigned.get(p);
+      let op = null;
+      if (source) op = stadiumOf(source);
+      else if (p.kind === 'field') op = { ...stadiumOf(p.file), side: 'empty' }; // place's own stadium never loads
+      else if (p.kind === 'surroundings' && (holds(info && info.placeHolders, p.file, !!place.field) || sRegion)) op = outsideOf(p.file);
+      if (!op) return; // effects, lights and unused sound parts load as they are
       const file = newFile(i, p);
       renames[name(p)] = file.replace(/\.upk$/i, '');
-      ops.push(p === slot ? stadiumSide(stadium.file, { gameFile: file, create: true })
-        : outsideSide(p.file, { gameFile: file, create: true, part: true }));
+      ops.push({ ...op, gameFile: file, create: true });
     });
-    ops.push(outsideSide(place.file, { gameFile: place.file, gameplay: true, renames }));
-    if (slot.kind === 'audio') note = `${place.name}’s background sounds make room for it, so they are quiet.`;
+    // the main file goes last, so the game never loads it before the files it points to exist
+    ops.push(outsideOf(place.file, { gameFile: place.file, gameplay: true, part: true, renames }));
+    const quiet = [...assigned.keys()].some((s) => s.kind === 'audio');
+    const left = sources.length - assigned.size;
+    const note = [quiet ? `${place.name}’s background sounds make room for the stadium, so they are quiet.` : '',
+      left > 0 ? `Part of ${stadium.name}’s stadium did not fit and is left out.` : ''].filter(Boolean).join(' ');
+    return { how: 'build', ops, play: [place], note, files: ops.length };
   }
-  return { how: 'build', ops, play: [place], note, files: ops.length };
+
+  // no slot in place: the stadium arena's map is the base, place's outside loads in its parts
+  const sParts = stadium.parts.filter((p) => p.kind !== 'field' && p.kind !== 'lights');
+  if (!sParts.length) return { how: 'none', reason: `${stadium.name} and ${place.name} are each one file with no parts, so there is nowhere to load one into the other.` };
+  const pSources = [place.file, ...pParts.filter((p) => p.kind === 'surroundings' || p.kind === 'effects').map((p) => p.file)];
+  const free = sParts.filter((p) => p.kind === 'audio' || !holds(info && info.stadiumHolders, p.file, !!stadium.field && p.kind !== 'effects'));
+  const ops = [];
+  const renames = {};
+  const assigned = new Map();
+  free.forEach((slot, i) => { if (pSources[i]) assigned.set(slot, pSources[i]); });
+  sParts.forEach((slot, i) => {
+    const source = assigned.get(slot);
+    if (!source && slot.kind === 'audio') return;
+    const file = newFile(i, slot);
+    renames[name(slot)] = file.replace(/\.upk$/i, '');
+    ops.push(source ? { ...outsideOf(source), gameFile: file, create: true }
+      : free.includes(slot) ? { ...stadiumOf(slot.file), side: 'empty', gameFile: file, create: true }
+        : { ...stadiumOf(slot.file), lights: true, gameFile: file, create: true });
+  });
+  ops.push({ ...stadiumOf(stadium.file), gameFile: place.file, gameplay: true, lights: true, part: false, renames });
+  return {
+    how: 'build', ops, play: [place], files: ops.length,
+    note: `${place.name} has no stadium or sound file to load ${stadium.name}’s stadium in, so ${stadium.name}’s map is used with ${place.name}’s outside and sky around it; its light and fog are ${stadium.name}’s.`,
+  };
 }
 // A short file name for a built part, the same every time for the same merge.
 function mapbuildName(seed, maxLen) {
   const hex = require('crypto').createHash('sha1').update(seed).digest('hex');
   return `BP${hex.slice(0, Math.max(4, Math.min(8, maxLen - 2)))}`;
 }
-// What mergePlan needs to know about the stadium arena's parts and both stadiums, read from
-// the maps. open(file) returns an opened package (mapbuild.open) or null.
+// What mergePlan needs to know, read from the maps. open(file) returns an opened package
+// (mapbuild.open) or null.
 function mergeInfo(stadium, place, open, mapbuild) {
   const holders = (a) => [a.file, a.field, ...a.parts.filter((p) => p.kind === 'surroundings').map((p) => p.file)].filter(Boolean);
   const region = (a) => mapbuild.arenaRegion(holders(a).map(open).filter(Boolean));
   const stadiumRegion = region(stadium), placeRegion = region(place);
-  const free = new Set();
-  for (const p of stadium.parts.filter((x) => x.kind === 'surroundings' || x.kind === 'effects')) {
-    const pkg = open(p.file);
-    if (pkg && mapbuild.stadiumPieces(pkg, stadiumRegion) === 0) free.add(p.file.toLowerCase());
-  }
-  return { stadiumRegion, placeRegion, free };
+  const withStadium = (files, reg) => new Set(files.filter((f) => { const pkg = open(f); return pkg && mapbuild.stadiumPieces(pkg, reg) > 0; }).map((f) => f.toLowerCase()));
+  return {
+    stadiumRegion, placeRegion,
+    stadiumHolders: withStadium([stadium.file, ...stadium.parts.filter((p) => p.kind === 'surroundings' || p.kind === 'effects').map((p) => p.file)], stadiumRegion),
+    placeHolders: withStadium(place.parts.filter((p) => p.kind === 'surroundings').map((p) => p.file), placeRegion),
+  };
 }
+
 /* ---------- merged arenas ----------
  * `changes` is what Boostpad has changed in the game folder: game file (lower case) -> op.
  * Merges and snow are copies, so they can be followed back to the file that is really loaded. */
@@ -247,7 +265,7 @@ function everyMatchOps(chosen, arenas, changes = new Map(), label = chosen.name)
   // original main file would lose it
   const built = changes.get(chosen.file.toLowerCase());
   const make = built && built.kind === 'build' && built.group !== 'everymatch'
-    ? (a) => ({ kind: 'build', gameFile: a.file, from: built.from, side: built.side, renames: built.renames, region: built.region, clear: built.clear, gameplay: built.gameplay })
+    ? (a) => ({ kind: 'build', gameFile: a.file, from: built.from, side: built.side, renames: built.renames, region: built.region, clear: built.clear, gameplay: built.gameplay, lights: built.lights, part: built.part })
     : (a) => ({ kind: 'copy', gameFile: a.file, sourceGameFile: source });
   return arenas.filter((a) => a.standard && a.id !== chosen.id && a.file.toLowerCase() !== source.toLowerCase() && !own(a)).map((a) => ({
     ...make(a), category: 'map', group: 'everymatch', chosen: chosen.id, label: `${label} in place of ${a.name}`,

@@ -1,6 +1,6 @@
 {
   "name": "boostpad",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Free, open-source cosmetic mod manager for Rocket League: item swaps, mod packs, workshop maps, presets, overlay.",
   "main": "src/main/main.js",
   "license": "MIT",

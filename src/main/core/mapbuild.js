@@ -264,7 +264,8 @@ const LIGHTS = /^(StaticLightCollectionActor|.*Light)$/;
  * package of a merge has them.
  * Returns counts; `log` (an array) gets one line per thing.
  */
-function keepSide(P, side, { region = DEFAULT_REGION, clear = [], gameplay = side === 'stadium', part = false } = {}, log = null) {
+function keepSide(P, side, { region = DEFAULT_REGION, clear = [], gameplay = side === 'stadium', part = false, lights = null } = {}, log = null) {
+  const keepLights = lights === null ? side === 'stadium' || gameplay : !!lights;
   const stats = { kept: 0, hidden: 0 };
   const both = [...region, ...clear];
   const reach = regionBounds(both), own = regionBounds(region);
@@ -276,7 +277,7 @@ function keepSide(P, side, { region = DEFAULT_REGION, clear = [], gameplay = sid
       if (it.cls === 'InstancedFoliageActor') keep = side === 'surroundings';
       else if (GAMEPLAY.test(it.cls)) keep = gameplay;
       else if (ATMOSPHERE.test(it.cls)) keep = side === 'surroundings';
-      else if (LIGHTS.test(it.cls)) keep = side === 'stadium' || gameplay;
+      else if (LIGHTS.test(it.cls)) keep = keepLights;
       else if (side === 'stadium') keep = !it.box || inRegion(it.box.c, region); // no position: an arena piece
       else keep = !!it.box && !inRegion(it.box.c, both);
     } else if (SKY.test(it.name)) {

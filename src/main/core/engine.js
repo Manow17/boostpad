@@ -85,6 +85,7 @@ class Engine {
       mapbuild.keepSide(pkg, op.side, {
         region: op.region || mapbuild.DEFAULT_REGION, clear: op.clear || [],
         gameplay: op.gameplay === undefined ? op.side === 'stadium' : !!op.gameplay, part: !!op.part,
+        lights: op.lights === undefined ? null : !!op.lights,
       });
       // a file the game has never had is read with the game's common key
       const key = op.create ? Buffer.from(upk.DEFAULT_KEYS[0], 'hex') : this.destinationKey(op.gameFile);

@@ -290,7 +290,7 @@ const api = {
     if (!arenaList) {
       const cache = new Store(path.join(app.getPath('userData'), 'arenas.json'), { dir: '', keys: 0, files: {} });
       const files = cache.get('dir') === cooked() && cache.get('keys') === extraKeys.length ? cache.get('files') : {};
-      arenaList = arenas.scanArenas(cooked(), files, extraKeys, readTexts(cooked(), extraKeys).maps);
+      arenaList = arenas.scanArenas(cooked(), files, extraKeys, readTexts(cooked(), extraKeys).maps, (f) => engine.pristine(f));
       cache.data = { dir: cooked(), keys: extraKeys.length, files };
       cache.save();
     }
