@@ -8,7 +8,8 @@
     "start": "electron .",
     "test": "node test/run.js",
     "icon": "electron scripts/make-icon.js",
-    "shortcut": "electron scripts/install-shortcut.js"
+    "shortcut": "electron scripts/install-shortcut.js",
+    "merge-test": "node scripts/merge-test/run.js"
   },
   "devDependencies": {
     "electron": "^45.4.1"

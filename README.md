@@ -107,6 +107,18 @@ Run the tests (they copy a few packages to a temp folder and never write to your
 npm test
 ```
 
+### Merge tester
+
+Checks merged arenas in the game, many at a time, without anyone playing them:
+
+```
+npm run merge-test -- --rounds 1
+```
+
+Each round merges every standard arena once as the stadium and once as the place (about 60 merges, each arena's place file touched once, so they never collide), restarts Rocket League once (it reads arena files at start), starts BakkesMod, loads each merged arena in Free Play over BakkesMod's RCON (`load_freeplay`), and takes screenshots: kickoff, left, back, right, sky, at a side wall and over it. Each arena gets one contact sheet; `index.html` in `%APPDATA%\boostpad\merge-test\runs\<time>` lists them, the darkest (holes, black sky) first, and `report.json` has the details. `--round 2` uses the next pairing, `--pairs stadium_id:place_id,...` tests chosen pairs, `--mouse` tunes how far the camera turns, `--keep` leaves the last round in place.
+
+It presses keys and moves the mouse in the game window, so run it when nobody is using the PC. Its merges are tracked apart from yours (its own records and backups in `%APPDATA%\boostpad\merge-test`), arenas you changed yourself are left out, and everything it wrote is reverted at the end, after an error too. Needs BakkesMod with its RCON plugin on.
+
 ## How a swap works
 
 Each item is a package file such as `WHEEL_Star_SF.upk` whose contents answer to the name `WHEEL_Star`. To make item A look like item B, Boostpad takes B's package, renames `B` to `A` in its name table, and writes the result over A's file. The rename keeps the exact byte size (shorter names are padded), so nothing else in the file moves and the compressed data is never rewritten. A's original file is copied to Boostpad's data folder first.
